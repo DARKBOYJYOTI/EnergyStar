@@ -1,10 +1,24 @@
-name: Build EnergyStar
+name: Build and Release EnergyStar
 
 on:
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v2.0.0-beta.1)'
+        required: true
+        default: 'v2.0.0-beta.1'
+        type: string
+      prerelease:
+        description: 'Mark as Pre-release'
+        required: true
+        default: true
+        type: boolean
+  push:
+    tags:
+      - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -46,3 +60,78 @@ jobs:
           name: EnergyStar-portable-${{ matrix.arch }}
           path: dist/portable/EnergyStar-portable-${{ matrix.arch }}.exe
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Prepare release notes
+        shell: pwsh
+        run: |
+          @'
+          ## EnergyStar 2.0.0 Pre-Release
+
+          Native Windows Efficiency, Battery & Desktop Responsiveness Optimizer for Windows 11 and 10.
+
+          ### 📦 Available Downloads
+          | Package | Architecture | Type |
+          | :--- | :--- | :--- |
+          | **EnergyStar-Setup-win-x64.exe** | x64 | Setup Installer |
+          | **EnergyStar-portable-x64.exe** | x64 | Standalone Portable |
+          | **EnergyStar-Setup-win-ARM64.exe** | ARM64 | Setup Installer |
+          | **EnergyStar-portable-ARM64.exe** | ARM64 | Standalone Portable |
+
+          ### 🚀 What's New
+          - **Foreground App Smoothness & Desktop Responsiveness**: Boosts active applications and worker threads with immediate priority while gracefully applying EcoQoS (Efficiency Mode) to background applications.
+          - **Smart Battery & Desktop Detection**: Automatically detects desktop PCs without a battery. Auto mode is cleanly disabled/grayed out, and Always-On mode is enforced out of the box for maximum desktop responsiveness.
+          - **Single Native Architecture**: UI, background service (`EnergyStarService`), and user session foreground agent are packaged in a single lightweight C++ binary with no external dependencies or runtimes.
+          - **Whitelist Support**: Keep performance-critical background tasks (compilers, audio workstations, renderers) at full speed. Easily add apps or Start Menu shortcuts (`.lnk`) with automatic resolution.
+          - **Dedicated Help & About Tabs**: Comprehensive in-app user guide, clickable repository links, MIT license terms, and privacy policy (100% local, no telemetry, no tracking).
+          - **Enhanced Logging**: Optional high-precision diagnostic log format with timezone offsets, process names, and PIDs (disabled by default for zero overhead).
+          '@ | Set-Content -Path release-notes.md -Encoding utf8
+
+      - name: Create or Update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.tag_name }}' } else { '${{ github.ref_name }}' }
+          if (-not $tag) { $tag = 'v2.0.0-beta.1' }
+
+          $isPrerelease = $true
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+              $isPrerelease = ('${{ inputs.prerelease }}' -eq 'true')
+          } elseif (-not ($tag -match '-(beta|alpha|rc|pre)')) {
+              $isPrerelease = $false
+          }
+
+          $prereleaseArg = if ($isPrerelease) { @('--prerelease') } else { @() }
+
+          Write-Host "Checking if release $tag exists..."
+          $releaseExists = $false
+          try {
+              $null = gh release view $tag --json tagName 2>&1
+              if ($LASTEXITCODE -eq 0) { $releaseExists = $true }
+          } catch {
+              $releaseExists = $false
+          }
+
+          $files = Get-ChildItem -Path release-assets/*.exe | ForEach-Object { $_.FullName }
+
+          if ($releaseExists) {
+              Write-Host "Updating existing release $tag..."
+              gh release edit $tag --title "EnergyStar $tag" --notes-file release-notes.md @prereleaseArg
+              gh release upload $tag @files --clobber
+          } else {
+              Write-Host "Creating new release $tag..."
+              gh release create $tag @files --title "EnergyStar $tag" --notes-file release-notes.md @prereleaseArg --target ${{ github.sha }}
+          }
