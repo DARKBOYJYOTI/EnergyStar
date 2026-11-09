@@ -1,24 +1,50 @@
 #include <windows.h>
 #include <commctrl.h>
+#include <dwmapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
-#include <uxtheme.h>
-#include <vector>
 #include <string>
+#include <vector>
 #include <algorithm>
 #include <iterator>
+
+#include "Theme.h"
+#include "UIControls.h"
 #include "../Shared/Protocol.h"
 
 #pragma comment(lib, "Comctl32.lib")
-#pragma comment(lib, "Comdlg32.lib")
 #pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "Ole32.lib")
+#pragma comment(lib, "Dwmapi.lib")
+#pragma comment(lib, "Advapi32.lib")
 
 namespace {
-constexpr int kAuto = 101, kAlways = 108, kOff = 109, kLog = 102, kList = 103, kAdd = 104, kRemove = 105, kApply = 106, kStatus = 107;
-HWND g_auto{}, g_always{}, g_off{}, g_log{}, g_list{}, g_status{};
-HFONT g_font{};
-HBRUSH g_background{};
+constexpr int kPagePower = 0, kPageWhitelist = 1, kPageSettings = 2, kPageAbout = 3;
+
+constexpr int kNavPower = 201, kNavWhitelist = 202, kNavSettings = 203, kNavAbout = 204;
+constexpr int kModeAuto = 210, kModeAlways = 211, kModeOff = 212;
+constexpr int kToggleLog = 213;
+constexpr int kList = 214, kAdd = 215, kRemove = 216, kSave = 217;
+constexpr int kEmpty = 218, kVersion = 219;
+
+constexpr UINT_PTR kStatusTimer = 1, kToastTimer = 2;
+
+HWND g_window{}, g_auto{}, g_always{}, g_off{}, g_toggle{}, g_list{}, g_empty{}, g_add{}, g_remove{}, g_save{};
+HWND g_nav[4]{}, g_version{};
+Theme g_theme{};
+HBRUSH g_contentBrush{}, g_sidebarBrush{}, g_cardBrush{};
+HICON g_appIcon{};
+int g_page = kPagePower;
+PowerMode g_mode = PowerMode::Automatic;
+bool g_logging = false;
+bool g_active = false;
+bool g_serviceOk = false;
+bool g_toast = false;
+std::wstring g_status = L"Connecting to service…";
 std::vector<std::wstring> g_exclusions;
+RECT g_listCard{};
+
+int S(int value) { return Dpi(g_theme, value); }
 
 bool CallService(PipeMessage& message) {
     HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -28,53 +54,105 @@ bool CallService(PipeMessage& message) {
     bool ok = WriteFile(pipe, &message, requestSize, &written, nullptr) && written == requestSize &&
         ReadFile(pipe, &message, sizeof(message), &read, nullptr) && read == sizeof(message);
     CloseHandle(pipe);
-    return ok && message.magic == kProtocolMagic;
+    return ok && message.magic == kProtocolMagic && message.foregroundPid != 0;
 }
 
-void ApplyFont(HWND control) { SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE); }
+std::wstring DataDirectory() {
+    wchar_t module[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, module, MAX_PATH)) {
+        std::wstring folder(module);
+        const size_t slash = folder.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) folder.resize(slash);
+        if (GetFileAttributesW((folder + L"\\EnergyStar.installed").c_str()) == INVALID_FILE_ATTRIBUTES)
+            return folder;
+    }
+    PWSTR known = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_CREATE, nullptr, &known))) {
+        std::wstring folder = std::wstring(known) + L"\\EnergyStar";
+        CoTaskMemFree(known);
+        return folder;
+    }
+    return L".";
+}
+
+void UpdateStatusLine() {
+    if (!g_serviceOk) { g_status = L"Service unavailable · run setup as administrator"; g_active = false; return; }
+    SYSTEM_POWER_STATUS power{};
+    GetSystemPowerStatus(&power);
+    if (!g_active) { g_status = L"Inactive · power control is off"; return; }
+    g_status = power.ACLineStatus == 0 ? L"Active · running on battery" : L"Active · connected to power";
+}
+
+void RefreshStatusOnly() {
+    PipeMessage message{};
+    message.action = PipeAction::Status;
+    g_serviceOk = CallService(message);
+    if (g_serviceOk) g_active = message.enabled != 0;
+    UpdateStatusLine();
+    InvalidateRect(g_window, nullptr, FALSE);
+}
+
+void ApplyModeChecks() {
+    SendMessageW(g_auto, BM_SETCHECK, g_mode == PowerMode::Automatic ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(g_always, BM_SETCHECK, g_mode == PowerMode::AlwaysOn ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(g_off, BM_SETCHECK, g_mode == PowerMode::Off ? BST_CHECKED : BST_UNCHECKED, 0);
+}
 
 void RefreshList() {
     SendMessageW(g_list, LB_RESETCONTENT, 0, 0);
-    for (const auto& path : g_exclusions) SendMessageW(g_list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(path.c_str()));
+    for (const auto& path : g_exclusions)
+        SendMessageW(g_list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(path.c_str()));
+    ShowWindow(g_list, g_exclusions.empty() ? SW_HIDE : SW_SHOW);
+    ShowWindow(g_empty, g_exclusions.empty() ? SW_SHOW : SW_HIDE);
+    InvalidateRect(g_window, &g_listCard, FALSE);
 }
 
 void LoadSettings() {
     PipeMessage message{};
     message.action = PipeAction::Status;
-    if (!CallService(message)) {
-        SetWindowTextW(g_status, L"Core service is unavailable. Run setup as administrator.");
+    g_serviceOk = CallService(message);
+    if (!g_serviceOk) {
+        g_active = false;
+        g_status = L"Service unavailable · run setup as administrator";
+        ApplyModeChecks();
+        SendMessageW(g_toggle, BM_SETCHECK, BST_UNCHECKED, 0);
         return;
     }
-    if (!message.foregroundPid) {
-        MessageBoxW(nullptr, L"Service rejected configuration. Check whitelist paths and try again.", L"EnergyStar", MB_ICONERROR | MB_OK);
-        return;
-    }
-    SendMessageW(message.mode == PowerMode::Automatic ? g_auto : message.mode == PowerMode::AlwaysOn ? g_always : g_off,
-        BM_SETCHECK, BST_CHECKED, 0);
-    SendMessageW(g_log, BM_SETCHECK, message.logging ? BST_CHECKED : BST_UNCHECKED, 0);
+    g_mode = message.mode;
+    g_logging = message.logging != 0;
+    g_active = message.enabled != 0;
+    ApplyModeChecks();
+    SendMessageW(g_toggle, BM_SETCHECK, g_logging ? BST_CHECKED : BST_UNCHECKED, 0);
     g_exclusions.clear();
-    for (DWORD i = 0; i < message.exclusionCount && i < kMaxExclusions; ++i) g_exclusions.emplace_back(message.exclusions[i]);
+    for (DWORD i = 0; i < message.exclusionCount && i < kMaxExclusions; ++i)
+        g_exclusions.emplace_back(message.exclusions[i]);
     RefreshList();
-    SetWindowTextW(g_status, message.enabled ? (message.onBattery ? L"Active · running on battery" : L"Active · connected to power") : L"Paused · EcoQoS is off");
+    UpdateStatusLine();
+    InvalidateRect(g_window, nullptr, FALSE);
 }
 
-void SaveSettings() {
+bool SaveSettings() {
     PipeMessage message{};
     message.action = PipeAction::Configure;
-    message.mode = SendMessageW(g_always, BM_GETCHECK, 0, 0) == BST_CHECKED ? PowerMode::AlwaysOn :
-        SendMessageW(g_off, BM_GETCHECK, 0, 0) == BST_CHECKED ? PowerMode::Off : PowerMode::Automatic;
-    message.logging = SendMessageW(g_log, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    message.mode = g_mode;
+    message.logging = g_logging ? 1 : 0;
     message.exclusionCount = static_cast<DWORD>(std::min<size_t>(g_exclusions.size(), kMaxExclusions));
     for (DWORD i = 0; i < message.exclusionCount; ++i) wcscpy_s(message.exclusions[i], g_exclusions[i].c_str());
     if (!CallService(message)) {
-        MessageBoxW(nullptr, L"Could not update EnergyStar service.", L"EnergyStar", MB_ICONERROR | MB_OK);
-        return;
+        MessageBoxW(g_window, L"Could not update the EnergyStar service. Make sure setup completed.",
+            L"EnergyStar", MB_ICONERROR | MB_OK);
+        g_serviceOk = false;
+        UpdateStatusLine();
+        InvalidateRect(g_window, nullptr, FALSE);
+        return false;
     }
-    if (!message.foregroundPid) {
-        MessageBoxW(nullptr, L"Service rejected configuration. Check whitelist paths and try again.", L"EnergyStar", MB_ICONERROR | MB_OK);
-        return;
-    }
-    SetWindowTextW(g_status, L"Settings saved and applied.");
+    g_serviceOk = true;
+    g_active = message.enabled != 0;
+    g_toast = true;
+    SetTimer(g_window, kToastTimer, 1800, nullptr);
+    UpdateStatusLine();
+    InvalidateRect(g_window, nullptr, FALSE);
+    return true;
 }
 
 void BrowseApplication() {
@@ -86,98 +164,364 @@ void BrowseApplication() {
     dialog->SetOptions(options | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
     dialog->SetFileTypes(1, filters);
     dialog->SetTitle(L"Choose an application to exclude");
-    if (FAILED(dialog->Show(GetAncestor(g_list, GA_ROOT)))) { dialog->Release(); return; }
+    if (FAILED(dialog->Show(g_window))) { dialog->Release(); return; }
     IShellItem* item = nullptr;
     if (FAILED(dialog->GetResult(&item))) { dialog->Release(); return; }
-    PWSTR selectedPath = nullptr;
-    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath))) { item->Release(); dialog->Release(); return; }
-    std::wstring path(selectedPath);
-    CoTaskMemFree(selectedPath);
+    PWSTR selected = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &selected))) { item->Release(); dialog->Release(); return; }
+    std::wstring path(selected);
+    CoTaskMemFree(selected);
     item->Release();
     dialog->Release();
-    if (g_exclusions.size() >= kMaxExclusions) { MessageBoxW(nullptr, L"Whitelist is full.", L"EnergyStar", MB_ICONINFORMATION); return; }
-    if (std::find(g_exclusions.begin(), g_exclusions.end(), path) == g_exclusions.end()) g_exclusions.emplace_back(path);
-    RefreshList();
+    if (g_exclusions.size() >= kMaxExclusions) {
+        MessageBoxW(g_window, L"The whitelist is full.", L"EnergyStar", MB_ICONINFORMATION | MB_OK);
+        return;
+    }
+    if (std::find(g_exclusions.begin(), g_exclusions.end(), path) == g_exclusions.end()) {
+        g_exclusions.emplace_back(path);
+        RefreshList();
+        SaveSettings();
+    }
 }
 
-HWND AddControl(HWND parent, const wchar_t* klass, const wchar_t* text, DWORD style, int id, int x, int y, int w, int h) {
-    HWND control = CreateWindowExW(0, klass, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, parent,
+void RemoveSelected() {
+    const int selected = static_cast<int>(SendMessageW(g_list, LB_GETCURSEL, 0, 0));
+    if (selected < 0 || selected >= static_cast<int>(g_exclusions.size())) return;
+    g_exclusions.erase(g_exclusions.begin() + selected);
+    RefreshList();
+    SaveSettings();
+}
+
+HWND AddControl(const wchar_t* klass, const wchar_t* text, DWORD style, int id, HFONT font) {
+    HWND control = CreateWindowExW(0, klass, text, WS_CHILD | style, 0, 0, 0, 0, g_window,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
-    ApplyFont(control);
+    if (control && font) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     return control;
 }
 
-void DrawRoundedButton(const DRAWITEMSTRUCT* draw) {
-    const bool primary = draw->CtlID == kApply;
-    const bool pressed = (draw->itemState & ODS_SELECTED) != 0;
-    RECT rect = draw->rcItem;
-    HBRUSH fill = CreateSolidBrush(primary ? (pressed ? RGB(24, 91, 170) : RGB(35, 112, 204)) : RGB(232, 237, 244));
-    HPEN border = CreatePen(PS_SOLID, 1, primary ? RGB(35, 112, 204) : RGB(215, 222, 232));
-    HGDIOBJ oldBrush = SelectObject(draw->hDC, fill);
-    HGDIOBJ oldPen = SelectObject(draw->hDC, border);
-    RoundRect(draw->hDC, rect.left, rect.top, rect.right, rect.bottom, 12, 12);
-    SelectObject(draw->hDC, oldBrush);
-    SelectObject(draw->hDC, oldPen);
-    DeleteObject(fill);
-    DeleteObject(border);
-    SetBkMode(draw->hDC, TRANSPARENT);
-    SetTextColor(draw->hDC, primary ? RGB(255, 255, 255) : RGB(31, 41, 55));
-    HGDIOBJ oldFont = SelectObject(draw->hDC, g_font);
-    wchar_t label[128]{};
-    GetWindowTextW(draw->hwndItem, label, static_cast<int>(std::size(label)));
-    DrawTextW(draw->hDC, label, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    SelectObject(draw->hDC, oldFont);
+void ShowPageControls() {
+    for (HWND control : { g_auto, g_always, g_off })
+        ShowWindow(control, g_page == kPagePower ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_toggle, g_page == kPageSettings ? SW_SHOW : SW_HIDE);
+    const bool whitelist = g_page == kPageWhitelist;
+    ShowWindow(g_add, whitelist ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_remove, whitelist ? SW_SHOW : SW_HIDE);
+    if (whitelist) {
+        ShowWindow(g_list, g_exclusions.empty() ? SW_HIDE : SW_SHOW);
+        ShowWindow(g_empty, g_exclusions.empty() ? SW_SHOW : SW_HIDE);
+    } else {
+        ShowWindow(g_list, SW_HIDE);
+        ShowWindow(g_empty, SW_HIDE);
+    }
+    for (HWND nav : g_nav) InvalidateRect(nav, nullptr, FALSE);
+}
+
+void Layout() {
+    if (!g_window) return;
+    RECT client{};
+    GetClientRect(g_window, &client);
+    const int width = client.right, height = client.bottom;
+    const int sidebar = S(224);
+    const int pad = S(40);
+    const int contentX = sidebar + pad;
+    const int contentWidth = std::max(S(320), width - contentX - pad);
+    const int footerHeight = S(88);
+    const int footerTop = height - footerHeight;
+    const int bodyTop = S(118);
+
+    const int navX = S(14), navWidth = sidebar - S(28), navHeight = S(44), navGap = S(6), navTop = S(94);
+    for (int i = 0; i < 4; ++i) {
+        if (g_nav[i]) MoveWindow(g_nav[i], navX, navTop + i * (navHeight + navGap), navWidth, navHeight, TRUE);
+    }
+    if (g_version) MoveWindow(g_version, S(24), height - S(42), sidebar - S(48), S(22), TRUE);
+
+    int cardHeight = S(88), cardGap = S(14);
+    MoveWindow(g_auto, contentX, bodyTop, contentWidth, cardHeight, TRUE);
+    MoveWindow(g_always, contentX, bodyTop + cardHeight + cardGap, contentWidth, cardHeight, TRUE);
+    MoveWindow(g_off, contentX, bodyTop + 2 * (cardHeight + cardGap), contentWidth, cardHeight, TRUE);
+
+    MoveWindow(g_toggle, contentX, bodyTop, contentWidth, S(84), TRUE);
+
+    g_listCard = { contentX, bodyTop, contentX + contentWidth, footerTop - S(70) };
+    RECT listRect = g_listCard;
+    InflateRect(&listRect, -S(10), -S(10));
+    MoveWindow(g_list, listRect.left, listRect.top, listRect.right - listRect.left, listRect.bottom - listRect.top, TRUE);
+    MoveWindow(g_empty, listRect.left + S(16), listRect.top + (listRect.bottom - listRect.top) / 2 - S(12),
+        listRect.right - listRect.left - S(32), S(24), TRUE);
+
+    const int rowTop = g_listCard.bottom + S(14);
+    MoveWindow(g_add, contentX, rowTop, S(168), S(40), TRUE);
+    MoveWindow(g_remove, contentX + S(178), rowTop, S(120), S(40), TRUE);
+
+    const int saveWidth = S(172), saveHeight = S(42);
+    MoveWindow(g_save, width - pad - saveWidth, footerTop + (footerHeight - saveHeight) / 2, saveWidth, saveHeight, TRUE);
+    ShowPageControls();
+    InvalidateRect(g_window, nullptr, TRUE);
+}
+
+void PaintSidebar(HDC dc, const RECT& client) {
+    const int sidebar = S(224);
+    RECT bar{ 0, 0, sidebar, client.bottom };
+    FillRect(dc, &bar, g_sidebarBrush);
+
+    RECT divider{ sidebar - 1, 0, sidebar, client.bottom };
+    HBRUSH dividerBrush = CreateSolidBrush(g_theme.divider);
+    FillRect(dc, &divider, dividerBrush);
+    DeleteObject(dividerBrush);
+
+    const int iconSize = S(28);
+    if (g_appIcon)
+        DrawIconEx(dc, S(24), S(24), g_appIcon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
+
+    RECT name{ S(60), S(22), sidebar - S(12), S(22) + S(32) };
+    PaintText(dc, g_theme.heading, g_theme.text, name, L"EnergyStar", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+void PaintHeader(HDC dc, const RECT& client) {
+    const int contentX = S(264);
+    const wchar_t* title = L"Power";
+    const wchar_t* subtitle = L"Choose when EnergyStar optimizes background applications.";
+    if (g_page == kPageWhitelist) { title = L"Whitelist"; subtitle = L"Applications that must always keep full speed."; }
+    else if (g_page == kPageSettings) { title = L"Settings"; subtitle = L"Logging and stored configuration."; }
+    else if (g_page == kPageAbout) { title = L"About"; subtitle = L"Lightweight power control for Windows."; }
+
+    RECT titleArea{ contentX, S(26), client.right - S(40), S(26) + S(38) };
+    PaintText(dc, g_theme.title, g_theme.text, titleArea, title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT subtitleArea{ contentX, S(66), client.right - S(40), S(66) + S(24) };
+    PaintText(dc, g_theme.small, g_theme.textSecondary, subtitleArea, subtitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+void PaintPageBody(HDC dc, const RECT& client) {
+    if (g_page == kPagePower) {
+        RECT note{ S(264), S(118) + 3 * (S(88) + S(14)) + S(4), client.right - S(40), S(190) + 3 * (S(88) + S(14)) };
+        PaintText(dc, g_theme.small, g_theme.textTertiary, note,
+            L"Changes apply immediately. Auto mode only throttles while running on battery.", DT_LEFT | DT_TOP | DT_WORDBREAK);
+    } else if (g_page == kPageSettings) {
+        const int left = S(264);
+        const int top = S(118) + S(84) + S(26);
+        const std::wstring directory = DataDirectory();
+        RECT logLabel{ left, top, client.right - S(40), top + S(20) };
+        PaintText(dc, g_theme.small, g_theme.textTertiary, logLabel, L"LOG FILE", DT_LEFT | DT_TOP | DT_SINGLELINE);
+        RECT logPath{ left, top + S(20), client.right - S(40), top + S(42) };
+        PaintText(dc, g_theme.small, g_theme.textSecondary, logPath, (directory + L"\\EnergyStar.log").c_str(),
+            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_PATH_ELLIPSIS);
+        RECT configLabel{ left, top + S(56), client.right - S(40), top + S(76) };
+        PaintText(dc, g_theme.small, g_theme.textTertiary, configLabel, L"CONFIGURATION", DT_LEFT | DT_TOP | DT_SINGLELINE);
+        RECT configPath{ left, top + S(76), client.right - S(40), top + S(98) };
+        PaintText(dc, g_theme.small, g_theme.textSecondary, configPath, (directory + L"\\EnergyStar.conf").c_str(),
+            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_PATH_ELLIPSIS);
+    } else if (g_page == kPageAbout) {
+        const std::wstring text =
+            L"EnergyStar keeps background applications efficient without slowing the app you are using.\n\n"
+            L"Version 2.0.0\n"
+            L"Service: EnergyStar.Service.exe · Agent: EnergyStar.Agent.exe\n\n"
+            L"Power control uses Windows EcoQoS and idle process priority. Windows may deny access to protected processes; "
+            L"add those applications to the whitelist if they must stay responsive.";
+        RECT area{ S(264), S(126), client.right - S(40), client.bottom - S(110) };
+        PaintText(dc, g_theme.body, g_theme.textSecondary, area, text.c_str(), DT_LEFT | DT_TOP | DT_WORDBREAK);
+    }
+}
+
+void PaintFooter(HDC dc, const RECT& client) {
+    const int footerTop = client.bottom - S(88);
+    RECT line{ S(224), footerTop, client.right, footerTop + 1 };
+    HBRUSH brush = CreateSolidBrush(g_theme.divider);
+    FillRect(dc, &line, brush);
+    DeleteObject(brush);
+
+    const int dotSize = S(9);
+    const int dotLeft = S(264);
+    const int middle = footerTop + S(44);
+    DrawStatusDot(dc, dotLeft, middle - dotSize / 2, dotSize,
+        g_active ? g_theme.statusActive : g_theme.statusInactive);
+    RECT statusArea{ dotLeft + dotSize + S(10), middle - S(14), client.right - S(260), middle + S(14) };
+    PaintText(dc, g_theme.body, g_theme.textSecondary, statusArea, g_status.c_str(),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    if (g_toast) {
+        RECT toast{ client.right - S(40) - S(172) - S(96), middle - S(14), client.right - S(40) - S(172) - S(8), middle + S(14) };
+        PaintText(dc, g_theme.small, g_theme.statusActive, toast, L"Saved", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
+void PaintWindow(HWND window) {
+    PAINTSTRUCT paint{};
+    HDC dc = BeginPaint(window, &paint);
+    RECT client{};
+    GetClientRect(window, &client);
+
+    FillRect(dc, &client, g_contentBrush);
+    PaintSidebar(dc, client);
+    PaintHeader(dc, client);
+    PaintPageBody(dc, client);
+    PaintFooter(dc, client);
+
+    if (g_page == kPageWhitelist) FillRounded(dc, g_listCard, S(10), g_theme.card, g_theme.border);
+
+    EndPaint(window, &paint);
+}
+
+void Navigate(int page) {
+    if (g_page == page) return;
+    g_page = page;
+    Layout();
+}
+
+void ApplyDwm(HWND window) {
+    const DWORD corner = 2;
+    DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
+    const BOOL dark = g_theme.dark ? TRUE : FALSE;
+    DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
+    const DWORD backdrop = 2;
+    DwmSetWindowAttribute(window, 38, &backdrop, sizeof(backdrop));
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (message == WM_CREATE) {
-        g_background = CreateSolidBrush(RGB(246, 248, 251));
-        g_font = CreateFontW(-17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        AddControl(window, L"STATIC", L"EnergyStar", 0, 0, 28, 22, 250, 36);
-        AddControl(window, L"STATIC", L"POWER MODE", 0, 0, 28, 76, 200, 25);
-        g_auto = AddControl(window, L"BUTTON", L"Auto · battery only", BS_AUTORADIOBUTTON | WS_GROUP, kAuto, 30, 108, 190, 30);
-        g_always = AddControl(window, L"BUTTON", L"Always on", BS_AUTORADIOBUTTON, kAlways, 230, 108, 150, 30);
-        g_off = AddControl(window, L"BUTTON", L"Off", BS_AUTORADIOBUTTON, kOff, 390, 108, 100, 30);
-        g_log = AddControl(window, L"BUTTON", L"Enable debug log", BS_AUTOCHECKBOX, kLog, 28, 158, 260, 28);
-        AddControl(window, L"STATIC", L"WHITELIST", 0, 0, 28, 204, 200, 25);
-        g_list = AddControl(window, L"LISTBOX", L"", LBS_NOTIFY | WS_BORDER | WS_VSCROLL, kList, 28, 234, 520, 230);
-        AddControl(window, L"BUTTON", L"Add application…", BS_OWNERDRAW, kAdd, 28, 478, 160, 38);
-        AddControl(window, L"BUTTON", L"Remove", BS_OWNERDRAW, kRemove, 200, 478, 120, 38);
-        AddControl(window, L"BUTTON", L"Save changes", BS_OWNERDRAW, kApply, 390, 478, 158, 38);
-        g_status = AddControl(window, L"STATIC", L"Connecting to service…", 0, kStatus, 28, 532, 520, 28);
+    switch (message) {
+    case WM_CREATE: {
+        g_window = window;
+        g_theme = CreateTheme(window);
+        g_contentBrush = CreateSolidBrush(g_theme.content);
+        g_sidebarBrush = CreateSolidBrush(g_theme.sidebar);
+        g_cardBrush = CreateSolidBrush(g_theme.card);
+        g_appIcon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
+            S(32), S(32), LR_DEFAULTSIZE));
+        ApplyDwm(window);
+
+        g_nav[0] = AddControl(L"BUTTON", L"Power", BS_OWNERDRAW, kNavPower, g_theme.semibold);
+        g_nav[1] = AddControl(L"BUTTON", L"Whitelist", BS_OWNERDRAW, kNavWhitelist, g_theme.semibold);
+        g_nav[2] = AddControl(L"BUTTON", L"Settings", BS_OWNERDRAW, kNavSettings, g_theme.semibold);
+        g_nav[3] = AddControl(L"BUTTON", L"About", BS_OWNERDRAW, kNavAbout, g_theme.semibold);
+        for (HWND nav : g_nav) EnableHover(nav);
+
+        g_auto = AddControl(L"BUTTON", L"Auto · battery only", BS_AUTORADIOBUTTON | BS_OWNERDRAW | WS_GROUP, kModeAuto, g_theme.body);
+        g_always = AddControl(L"BUTTON", L"Always on", BS_AUTORADIOBUTTON | BS_OWNERDRAW, kModeAlways, g_theme.body);
+        g_off = AddControl(L"BUTTON", L"Off", BS_AUTORADIOBUTTON | BS_OWNERDRAW, kModeOff, g_theme.body);
+        for (HWND card : { g_auto, g_always, g_off }) EnableHover(card);
+
+        g_toggle = AddControl(L"BUTTON", L"Enable debug log", BS_AUTOCHECKBOX | BS_OWNERDRAW, kToggleLog, g_theme.body);
+        EnableHover(g_toggle);
+
+        g_list = AddControl(L"LISTBOX", L"", LBS_OWNERDRAWFIXED | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, kList, g_theme.body);
+        SendMessageW(g_list, LB_SETITEMHEIGHT, 0, S(34));
+        g_empty = AddControl(L"STATIC", L"No applications yet · add one below", SS_CENTER, kEmpty, g_theme.small);
+
+        g_add = AddControl(L"BUTTON", L"Add application…", BS_OWNERDRAW, kAdd, g_theme.semibold);
+        g_remove = AddControl(L"BUTTON", L"Remove", BS_OWNERDRAW, kRemove, g_theme.semibold);
+        g_save = AddControl(L"BUTTON", L"Save changes", BS_OWNERDRAW | BS_DEFPUSHBUTTON, kSave, g_theme.semibold);
+        for (HWND button : { g_add, g_remove, g_save }) EnableHover(button);
+
+        g_version = AddControl(L"STATIC", L"Version 2.0.0", SS_LEFT, kVersion, g_theme.small);
+
         LoadSettings();
+        Layout();
+        SetTimer(window, kStatusTimer, 5000, nullptr);
         return 0;
     }
-    if (message == WM_COMMAND) {
-        switch (LOWORD(wParam)) {
-        case kAdd: BrowseApplication(); return 0;
-        case kRemove: {
-            int selected = static_cast<int>(SendMessageW(g_list, LB_GETCURSEL, 0, 0));
-            if (selected >= 0 && selected < static_cast<int>(g_exclusions.size())) { g_exclusions.erase(g_exclusions.begin() + selected); RefreshList(); }
+    case WM_SIZE:
+        Layout();
+        return 0;
+    case WM_DPICHANGED: {
+        DestroyTheme(g_theme);
+        g_theme = CreateTheme(window);
+        for (HWND control : { g_auto, g_always, g_off, g_toggle, g_list, g_add, g_remove, g_save })
+            if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.body), TRUE);
+        if (g_version) SendMessageW(g_version, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.small), TRUE);
+        if (g_empty) SendMessageW(g_empty, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.small), TRUE);
+        for (HWND nav : g_nav)
+            if (nav) SendMessageW(nav, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.semibold), TRUE);
+        const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+        SetWindowPos(window, nullptr, suggested->left, suggested->top,
+            suggested->right - suggested->left, suggested->bottom - suggested->top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        ApplyDwm(window);
+        Layout();
+        return 0;
+    }
+    case WM_GETMINMAXINFO: {
+        auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+        info->ptMinTrackSize.x = S(800);
+        info->ptMinTrackSize.y = S(620);
+        return 0;
+    }
+    case WM_PAINT:
+        PaintWindow(window);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        SetBkMode(dc, TRANSPARENT);
+        const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
+        if (id == kEmpty) {
+            SetTextColor(dc, g_theme.textSecondary);
+            return reinterpret_cast<LRESULT>(g_cardBrush);
+        }
+        SetTextColor(dc, id == kVersion ? g_theme.textTertiary : g_theme.textSecondary);
+        return reinterpret_cast<LRESULT>(id == kVersion ? g_sidebarBrush : g_contentBrush);
+    }
+    case WM_CTLCOLORLISTBOX: {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        SetBkColor(dc, g_theme.card);
+        SetTextColor(dc, g_theme.text);
+        return reinterpret_cast<LRESULT>(g_cardBrush);
+    }
+    case WM_COMMAND: {
+        const int id = LOWORD(wParam);
+        if (id == kNavPower) { Navigate(kPagePower); return 0; }
+        if (id == kNavWhitelist) { Navigate(kPageWhitelist); return 0; }
+        if (id == kNavSettings) { Navigate(kPageSettings); return 0; }
+        if (id == kNavAbout) { Navigate(kPageAbout); return 0; }
+        if (id == kModeAuto || id == kModeAlways || id == kModeOff) {
+            g_mode = id == kModeAuto ? PowerMode::Automatic : id == kModeAlways ? PowerMode::AlwaysOn : PowerMode::Off;
+            ApplyModeChecks();
+            SaveSettings();
             return 0;
         }
-        case kApply: SaveSettings(); return 0;
-        case kAuto: case kAlways: case kOff: SaveSettings(); return 0;
+        if (id == kToggleLog) {
+            g_logging = SendMessageW(g_toggle, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            SaveSettings();
+            return 0;
         }
+        if (id == kAdd) { BrowseApplication(); return 0; }
+        if (id == kRemove) { RemoveSelected(); return 0; }
+        if (id == kSave) { SaveSettings(); return 0; }
+        if (id == kList && HIWORD(wParam) == LBN_SELCHANGE) { InvalidateRect(g_list, nullptr, FALSE); return 0; }
+        return 0;
     }
-    if (message == WM_DRAWITEM && wParam != kList) {
-        DrawRoundedButton(reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
-        return TRUE;
+    case WM_DRAWITEM: {
+        auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        switch (draw->CtlID) {
+        case kNavPower: DrawNavItem(g_theme, draw, NavPower, g_page == kPagePower); return TRUE;
+        case kNavWhitelist: DrawNavItem(g_theme, draw, NavWhitelist, g_page == kPageWhitelist); return TRUE;
+        case kNavSettings: DrawNavItem(g_theme, draw, NavSettings, g_page == kPageSettings); return TRUE;
+        case kNavAbout: DrawNavItem(g_theme, draw, NavAbout, g_page == kPageAbout); return TRUE;
+        case kModeAuto: DrawModeCard(g_theme, draw, L"Auto · battery only", L"Optimize background apps while on battery."); return TRUE;
+        case kModeAlways: DrawModeCard(g_theme, draw, L"Always on", L"Keep power control active at all times."); return TRUE;
+        case kModeOff: DrawModeCard(g_theme, draw, L"Off", L"Disable power control completely."); return TRUE;
+        case kToggleLog: DrawToggleCard(g_theme, draw, L"Enable debug log", L"Save detailed logs for troubleshooting."); return TRUE;
+        case kAdd: DrawSecondaryButton(g_theme, draw); return TRUE;
+        case kRemove: DrawSecondaryButton(g_theme, draw); return TRUE;
+        case kSave: DrawPrimaryButton(g_theme, draw); return TRUE;
+        case kList: DrawListRow(g_theme, draw); return TRUE;
+        }
+        return FALSE;
     }
-    if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
-    if (message == WM_CTLCOLORSTATIC || message == WM_CTLCOLORBTN) {
-        HDC dc = reinterpret_cast<HDC>(wParam);
-        SetBkColor(dc, RGB(246, 248, 251));
-        SetTextColor(dc, RGB(31, 41, 55));
-        return reinterpret_cast<LRESULT>(g_background);
+    case WM_TIMER:
+        if (wParam == kToastTimer) { KillTimer(window, kToastTimer); g_toast = false; InvalidateRect(window, nullptr, FALSE); return 0; }
+        if (wParam == kStatusTimer) { RefreshStatusOnly(); return 0; }
+        return 0;
+    case WM_DESTROY:
+        KillTimer(window, kStatusTimer);
+        KillTimer(window, kToastTimer);
+        if (g_appIcon) DestroyIcon(g_appIcon);
+        DestroyTheme(g_theme);
+        if (g_contentBrush) DeleteObject(g_contentBrush);
+        if (g_sidebarBrush) DeleteObject(g_sidebarBrush);
+        if (g_cardBrush) DeleteObject(g_cardBrush);
+        PostQuitMessage(0);
+        return 0;
     }
-    if (message == WM_ERASEBKGND) {
-        RECT area{}; GetClientRect(window, &area);
-        FillRect(reinterpret_cast<HDC>(wParam), &area, g_background);
-        return 1;
-    }
-    if (message == WM_DESTROY) { if (g_font) DeleteObject(g_font); if (g_background) DeleteObject(g_background); PostQuitMessage(0); return 0; }
     return DefWindowProcW(window, message, wParam, lParam);
 }
 }
@@ -186,22 +530,29 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     INITCOMMONCONTROLSEX controls{ sizeof(controls), ICC_STANDARD_CLASSES };
     InitCommonControlsEx(&controls);
-    WNDCLASSW klass{};
+
+    WNDCLASSEXW klass{ sizeof(klass) };
     klass.lpfnWndProc = WindowProc;
     klass.hInstance = instance;
     klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     klass.hIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
-    klass.hbrBackground = CreateSolidBrush(RGB(244, 246, 250));
+    klass.hIconSm = klass.hIcon;
+    klass.hbrBackground = nullptr;
     klass.lpszClassName = L"EnergyStarNativeWindow";
-    RegisterClassW(&klass);
-    HWND window = CreateWindowExW(0, klass.lpszClassName, L"EnergyStar", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 600, 650, nullptr, nullptr, instance, nullptr);
+    RegisterClassExW(&klass);
+
+    HWND window = CreateWindowExW(WS_EX_APPWINDOW, klass.lpszClassName, L"EnergyStar",
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 1000, 700,
+        nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
     ShowWindow(window, show);
     UpdateWindow(window);
+
     MSG message{};
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
-    DeleteObject(klass.hbrBackground);
+    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
     CoUninitialize();
     return static_cast<int>(message.wParam);
 }
