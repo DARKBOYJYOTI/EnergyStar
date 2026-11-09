@@ -53,6 +53,7 @@ Filename: "{app}\EnergyStar.exe"; Description: "Launch EnergyStar"; Flags: nowai
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/c net stop EnergyStarService >nul 2>&1"; Flags: runhidden waituntilterminated
 Filename: "{app}\EnergyStar.Service.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveEnergyStarService"
+Filename: "{cmd}"; Parameters: "/c taskkill /f /im EnergyStar.Agent.exe >nul 2>&1"; Flags: runhidden waituntilterminated
 
 [UninstallDelete]
 Type: files; Name: "{app}\EnergyStar.installed"
@@ -66,6 +67,6 @@ var
   ResultCode: Integer;
 begin
   if CurStep = ssInstall then
-    Exec(ExpandConstant('{cmd}'), '/c net stop EnergyStarService >nul 2>&1', '',
+    Exec(ExpandConstant('{cmd}'), '/c net stop EnergyStarService >nul 2>&1 & taskkill /f /im EnergyStar.Agent.exe >nul 2>&1', '',
       SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
