@@ -261,17 +261,6 @@ void RefreshStatus() {
 
 void LoadSettings() {
     const bool hasBattery = HasSystemBattery();
-    g_mode = hasBattery ? PowerMode::Automatic : PowerMode::AlwaysOn;
-    g_logging = false;
-    std::wifstream config(std::filesystem::path(g_dataDir) / L"EnergyStar.conf");
-    std::wstring line;
-    while (std::getline(config, line)) {
-        if (line == L"mode=auto") g_mode = PowerMode::Automatic;
-        else if (line == L"mode=always") g_mode = PowerMode::AlwaysOn;
-        else if (line == L"mode=off") g_mode = PowerMode::Off;
-        else if (line == L"log=on") g_logging = true;
-        else if (line == L"log=off") g_logging = false;
-    }
     if (!hasBattery && g_mode == PowerMode::Automatic) {
         g_mode = PowerMode::AlwaysOn;
     }
