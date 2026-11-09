@@ -27,8 +27,9 @@ BEGIN
     GROUPBOX        "Applications that keep full speed", -1, 7, 7, 173, 180
     CONTROL         "", IDC_LIST, "ListBox", LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, 14, 18, 159, 124, WS_EX_CLIENTEDGE
     CONTROL         "No applications yet.", IDC_EMPTY, "Static", SS_CENTER | SS_CENTERIMAGE, 14, 18, 159, 124
-    PUSHBUTTON      "Add...", IDC_ADD, 14, 150, 54, 14
-    PUSHBUTTON      "Remove", IDC_REMOVE, 74, 150, 54, 14
+    PUSHBUTTON      "Add...", IDC_ADD, 14, 150, 48, 14
+    PUSHBUTTON      "Remove", IDC_REMOVE, 68, 150, 48, 14
+    PUSHBUTTON      "Copy", IDC_COPY_PATH, 122, 150, 51, 14
 END
 
 IDD_SETTINGS DIALOGEX 0, 0, 187, 196
@@ -36,14 +37,17 @@ STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "Settings"
 FONT 9, "Segoe UI", 400, 0, 0x0
 BEGIN
-    GROUPBOX        "Debug logging", -1, 7, 7, 173, 64
-    CONTROL         "Enable debug log", IDC_LOGGING, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 14, 20, 149, 10
-    LTEXT           "Save detailed logs for troubleshooting.", -1, 24, 34, 149, 20
-    GROUPBOX        "Data", -1, 7, 80, 173, 92
-    LTEXT           "Configuration and logs live in the", -1, 14, 94, 159, 10
-    LTEXT           "application folder.", -1, 14, 106, 159, 10
-    LTEXT           "Installed: C:\\Program Files\\EnergyStar", -1, 14, 124, 159, 20
-    LTEXT           "Portable: the application folder", -1, 14, 146, 159, 10
+    GROUPBOX        "Debug logging", -1, 7, 7, 173, 44
+    CONTROL         "Enable debug log", IDC_LOGGING, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 14, 18, 149, 10
+    LTEXT           "Save detailed logs for troubleshooting.", -1, 24, 30, 149, 16
+    GROUPBOX        "Windows Service", -1, 7, 54, 173, 62
+    LTEXT           "Status: Detecting...", IDC_SERVICE_STATUS, 14, 66, 159, 14
+    PUSHBUTTON      "Install Service", IDC_SERVICE_INSTALL, 14, 84, 75, 14
+    PUSHBUTTON      "Start Service", IDC_SERVICE_TOGGLE, 95, 84, 75, 14
+    GROUPBOX        "Data", -1, 7, 120, 173, 67
+    LTEXT           "Configuration and logs reside in:", -1, 14, 132, 159, 10
+    LTEXT           "Installed: C:\\Program Files\\EnergyStar", -1, 14, 146, 159, 10
+    LTEXT           "Portable: folder beside executable", -1, 14, 160, 159, 18
 END
 
 IDD_ABOUT DIALOGEX 0, 0, 187, 196

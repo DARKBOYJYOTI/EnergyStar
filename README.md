@@ -4,9 +4,12 @@ EnergyStar is a lightweight Windows power utility. One native executable hosts t
 
 ## Components
 
-- `EnergyStar.exe --service`: Windows service running as LocalSystem. Signed-in users can start and stop it from Services; a manual stop stays stopped.
-- `EnergyStar.exe --agent`: tiny hidden per-session foreground-event helper. One runs for each active user session. It has no UI and sends only process IDs through a local authenticated pipe.
+- `EnergyStar.exe --service`: Windows service running as LocalSystem in Session 0. Signed-in users can start and stop it; a manual stop stays stopped.
+- `EnergyStar.exe --agent`: tiny hidden per-session foreground-event helper. One runs in each active user desktop session. It has no UI and sends only process IDs through a local authenticated pipe.
 - `EnergyStar.exe`: on-demand native Win32 settings UI. It needs no administrator permission after setup and opens one window per user session.
+
+> [!NOTE]
+> When EnergyStar is installed and active, Task Manager will show two `EnergyStar.exe` entries under background processes: the background Windows Service (Session 0) and the user-session foreground tracking agent. This is normal Windows architecture due to Session 0 isolation. Agents are tracked via a Windows Job Object and terminate automatically when the service stops.
 
 Service shutdown restores process priorities and disables EcoQoS for processes managed during that run. Protected Windows processes may still deny access.
 
@@ -18,9 +21,10 @@ All builds store `EnergyStar.conf`, `whitelist.conf`, and `EnergyStar.log` besid
 
 ## Install and portable builds
 
-Run matching `EnergyStar-Setup-win-x64.exe` or `EnergyStar-Setup-win-ARM64.exe` as administrator. Setup installs and starts the service and creates shortcuts. To use a portable executable, run `EnergyStar-portable-x64.exe --install` as administrator once. All signed-in Windows users can use the shared service and settings; any user can stop or start the service in `services.msc`. A manual stop stays stopped until a user starts it or Windows reboots.
+- **Setup installer**: Run matching `EnergyStar-Setup-win-x64.exe` or `EnergyStar-Setup-win-ARM64.exe` as administrator. Setup installs and starts the service and creates shortcuts.
+- **Portable executable**: Portable downloads are single `.exe` files. You can manage the Windows service (Install Service, Remove Service, Start Service, Stop Service) directly from the **Settings** tab in the UI with one click (UAC elevation is requested only when needed). Alternatively, run `EnergyStar-portable-x64.exe --install` or `--uninstall` from an administrator command prompt.
 
-Portable downloads are single `.exe` files. Their settings and logs stay beside that executable.
+All signed-in Windows users can use the shared service and settings; any user can stop or start the service in `services.msc` or from the Settings tab. A manual stop stays stopped until a user starts it or Windows reboots.
 
 GitHub Actions builds only when manually dispatched. It exports setup and single-file portable executables for x64 and ARM64.
 

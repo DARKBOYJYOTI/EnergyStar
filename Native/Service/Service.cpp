@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <atomic>
 #include "../Shared/Protocol.h"
+#include "../App.h"
 
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Wtsapi32.lib")
@@ -30,6 +31,7 @@ HANDLE g_foregroundEvent{};
 struct ManagedProcess { DWORD priority{}; FILETIME created{}; };
 std::unordered_map<DWORD, ManagedProcess> g_managed;
 std::unordered_map<DWORD, HANDLE> g_agents;
+HANDLE g_jobObject{};
 std::atomic<DWORD> g_managedCount{};
 std::atomic<bool> g_configChanged{};
 std::wstring g_dataDir;
@@ -349,7 +351,9 @@ void LaunchAgents() {
             CreateEnvironmentBlock(&environment, primary, FALSE);
             if (CreateProcessAsUserW(primary, module, commandLine.data(), nullptr, nullptr, FALSE,
                     CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, environment, nullptr, &startup, &process)) {
-                CloseHandle(process.hThread); g_agents[sessionId] = process.hProcess;
+                CloseHandle(process.hThread);
+                if (g_jobObject) AssignProcessToJobObject(g_jobObject, process.hProcess);
+                g_agents[sessionId] = process.hProcess;
             }
             if (environment) DestroyEnvironmentBlock(environment);
             CloseHandle(primary);
@@ -375,6 +379,12 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
     SetServiceStatus(g_statusHandle, &g_status);
     g_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_foregroundEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g_jobObject = CreateJobObjectW(nullptr, nullptr);
+    if (g_jobObject) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limitInfo{};
+        limitInfo.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(g_jobObject, JobObjectExtendedLimitInformation, &limitInfo, sizeof(limitInfo));
+    }
     g_dataDir = GetDataDirectory();
     MigrateLegacySettings();
     LoadConfig();
@@ -403,6 +413,7 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
     for (auto& item : g_agents) { TerminateProcess(item.second, 0); CloseHandle(item.second); }
     g_agents.clear();
     if (pipeThread) { WaitForSingleObject(pipeThread, 2000); CloseHandle(pipeThread); }
+    if (g_jobObject) { CloseHandle(g_jobObject); g_jobObject = nullptr; }
     CloseHandle(g_stopEvent);
     CloseHandle(g_foregroundEvent);
     g_status.dwCurrentState = SERVICE_STOPPED; SetServiceStatus(g_statusHandle, &g_status);
@@ -495,9 +506,76 @@ bool RemoveService() {
 }
 }
 
+bool InstallEnergyStarService() {
+    return InstallService();
+}
+
+bool RemoveEnergyStarService() {
+    return RemoveService();
+}
+
+bool StartEnergyStarService() {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return false;
+    SC_HANDLE service = OpenServiceW(scm, L"EnergyStarService", SERVICE_START | SERVICE_QUERY_STATUS);
+    if (!service) {
+        CloseServiceHandle(scm);
+        return false;
+    }
+    SERVICE_STATUS status{};
+    if (QueryServiceStatus(service, &status) && status.dwCurrentState == SERVICE_RUNNING) {
+        CloseServiceHandle(service);
+        CloseServiceHandle(scm);
+        return true;
+    }
+    bool ok = StartServiceW(service, 0, nullptr) != FALSE || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING;
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    return ok;
+}
+
+bool StopEnergyStarService() {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return false;
+    SC_HANDLE service = OpenServiceW(scm, L"EnergyStarService", SERVICE_STOP | SERVICE_QUERY_STATUS);
+    if (!service) {
+        CloseServiceHandle(scm);
+        return false;
+    }
+    SERVICE_STATUS status{};
+    bool ok = ControlService(service, SERVICE_CONTROL_STOP, &status) != FALSE || GetLastError() == ERROR_SERVICE_NOT_ACTIVE;
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    return ok;
+}
+
+ServiceState QueryEnergyStarServiceState() {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return ServiceState::NotInstalled;
+    SC_HANDLE service = OpenServiceW(scm, L"EnergyStarService", SERVICE_QUERY_STATUS);
+    if (!service) {
+        CloseServiceHandle(scm);
+        return ServiceState::NotInstalled;
+    }
+    SERVICE_STATUS status{};
+    ServiceState state = ServiceState::NotInstalled;
+    if (QueryServiceStatus(service, &status)) {
+        switch (status.dwCurrentState) {
+        case SERVICE_RUNNING: state = ServiceState::Running; break;
+        case SERVICE_STOPPED: state = ServiceState::Stopped; break;
+        case SERVICE_START_PENDING: state = ServiceState::Starting; break;
+        case SERVICE_STOP_PENDING: state = ServiceState::Stopping; break;
+        default: state = ServiceState::Stopped; break;
+        }
+    }
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    return state;
+}
+
 int RunServiceProcess(const wchar_t* commandLine) {
-    if (commandLine && _wcsicmp(commandLine, L"--install") == 0) return InstallService() ? 0 : 1;
-    if (commandLine && _wcsicmp(commandLine, L"--uninstall") == 0) return RemoveService() ? 0 : 1;
+    if (commandLine && _wcsicmp(commandLine, L"--install") == 0) return InstallEnergyStarService() ? 0 : 1;
+    if (commandLine && _wcsicmp(commandLine, L"--uninstall") == 0) return RemoveEnergyStarService() ? 0 : 1;
     SERVICE_TABLE_ENTRYW table[] = { { const_cast<LPWSTR>(L"EnergyStarService"), ServiceMain }, { nullptr, nullptr } };
     return StartServiceCtrlDispatcherW(table) ? 0 : 1;
 }

@@ -10,6 +10,7 @@
 
 #include "Resource.h"
 #include "../Shared/Protocol.h"
+#include "../App.h"
 
 #pragma comment(lib, "Comctl32.lib")
 #pragma comment(lib, "Shell32.lib")
@@ -46,12 +47,41 @@ void CopyTextToClipboard(HWND owner, const std::wstring& text) {
     CloseClipboard();
 }
 
+bool RunElevatedCommand(HWND owner, const wchar_t* argument) {
+    wchar_t path[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    SHELLEXECUTEINFOW sei{ sizeof(sei) };
+    sei.lpVerb = L"runas";
+    sei.lpFile = path;
+    sei.lpParameters = argument;
+    sei.hwnd = owner;
+    sei.nShow = SW_HIDE;
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    if (!ShellExecuteExW(&sei)) return false;
+    if (sei.hProcess) {
+        WaitForSingleObject(sei.hProcess, 15000);
+        DWORD exitCode = 1;
+        GetExitCodeProcess(sei.hProcess, &exitCode);
+        CloseHandle(sei.hProcess);
+        return exitCode == 0;
+    }
+    return true;
+}
+
 LRESULT CALLBACK WhitelistListProc(HWND list, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
     if (message == WM_CONTEXTMENU) {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         int index = -1;
         if (point.x == -1 && point.y == -1) {
             index = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0));
+            if (index >= 0) {
+                RECT itemRect{};
+                if (SendMessageW(list, LB_GETITEMRECT, index, reinterpret_cast<LPARAM>(&itemRect)) != LB_ERR) {
+                    POINT pt{ itemRect.left + 20, itemRect.top + (itemRect.bottom - itemRect.top) / 2 };
+                    ClientToScreen(list, &pt);
+                    point = pt;
+                }
+            }
         } else {
             POINT client = point;
             ScreenToClient(list, &client);
@@ -60,34 +90,88 @@ LRESULT CALLBACK WhitelistListProc(HWND list, UINT message, WPARAM wParam, LPARA
         }
         if (index < 0 || index >= static_cast<int>(g_exclusions.size())) return 0;
         SendMessageW(list, LB_SETCURSEL, index, 0);
-        POINT screen{};
-        GetCursorPos(&screen);
+
+        HWND rootWindow = GetAncestor(list, GA_ROOT);
+        RECT winRect{};
+        if (!rootWindow || !GetWindowRect(rootWindow, &winRect)) {
+            GetWindowRect(list, &winRect);
+        }
+
+        const bool alignRight = (point.x > (winRect.left + winRect.right) / 2);
+        const bool alignBottom = (point.y > (winRect.top + winRect.bottom) / 2);
+
+        int menuX = point.x;
+        int menuY = point.y;
+        menuX = std::clamp(menuX, winRect.left + 10, winRect.right - 10);
+        menuY = std::clamp(menuY, winRect.top + 30, winRect.bottom - 10);
+
         HMENU menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, IDM_COPY_PATH, L"Copy path");
         SetMenuDefaultItem(menu, IDM_COPY_PATH, FALSE);
-        SIZE textSize{};
-        HDC dc = GetDC(list);
-        if (dc) {
-            GetTextExtentPoint32W(dc, L"Copy path", 9, &textSize);
-            ReleaseDC(list, dc);
-        }
-        const int menuWidth = textSize.cx + GetSystemMetrics(SM_CXMENUCHECK) + 80;
-        const int menuHeight = GetSystemMetrics(SM_CYMENU) + 8;
-        HWND sheet = GetParent(GetParent(list));
-        RECT client{};
-        if (GetClientRect(sheet, &client)) {
-            POINT corners[2] = { { client.left, client.top }, { client.right, client.bottom } };
-            MapWindowPoints(sheet, nullptr, corners, 2);
-            screen.x = std::clamp(screen.x, corners[0].x, std::max(corners[0].x, corners[1].x - menuWidth));
-            screen.y = std::clamp(screen.y, corners[0].y, std::max(corners[0].y, corners[1].y - menuHeight));
-        }
-        const int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, list, nullptr);
+
+        UINT flags = TPM_RETURNCMD | TPM_RIGHTBUTTON;
+        flags |= (alignRight ? TPM_RIGHTALIGN : TPM_LEFTALIGN);
+        flags |= (alignBottom ? TPM_BOTTOMALIGN : TPM_TOPALIGN);
+
+        const int command = TrackPopupMenu(menu, flags, menuX, menuY, 0, list, nullptr);
         DestroyMenu(menu);
         if (command == IDM_COPY_PATH) CopyTextToClipboard(GetParent(list), g_exclusions[index]);
         return 0;
     }
+    if (message == WM_KEYDOWN) {
+        if (wParam == 'C' && (GetKeyState(VK_CONTROL) < 0)) {
+            const int index = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0));
+            if (index >= 0 && index < static_cast<int>(g_exclusions.size())) {
+                CopyTextToClipboard(GetParent(list), g_exclusions[index]);
+                return 0;
+            }
+        }
+    }
     if (message == WM_NCDESTROY) RemoveWindowSubclass(list, WhitelistListProc, 1);
     return DefSubclassProc(list, message, wParam, lParam);
+}
+
+void UpdateServiceUi(HWND page) {
+    ServiceState state = QueryEnergyStarServiceState();
+    HWND statusLabel = GetDlgItem(page, IDC_SERVICE_STATUS);
+    HWND installBtn = GetDlgItem(page, IDC_SERVICE_INSTALL);
+    HWND toggleBtn = GetDlgItem(page, IDC_SERVICE_TOGGLE);
+
+    if (!statusLabel || !installBtn || !toggleBtn) return;
+
+    switch (state) {
+    case ServiceState::NotInstalled:
+        SetWindowTextW(statusLabel, L"Service status: Not installed");
+        SetWindowTextW(installBtn, L"Install Service");
+        EnableWindow(installBtn, TRUE);
+        SetWindowTextW(toggleBtn, L"Start Service");
+        EnableWindow(toggleBtn, FALSE);
+        break;
+    case ServiceState::Stopped:
+        SetWindowTextW(statusLabel, L"Service status: Installed (Stopped)");
+        SetWindowTextW(installBtn, L"Remove Service");
+        EnableWindow(installBtn, TRUE);
+        SetWindowTextW(toggleBtn, L"Start Service");
+        EnableWindow(toggleBtn, TRUE);
+        break;
+    case ServiceState::Running:
+        SetWindowTextW(statusLabel, L"Service status: Installed (Running)");
+        SetWindowTextW(installBtn, L"Remove Service");
+        EnableWindow(installBtn, TRUE);
+        SetWindowTextW(toggleBtn, L"Stop Service");
+        EnableWindow(toggleBtn, TRUE);
+        break;
+    case ServiceState::Starting:
+        SetWindowTextW(statusLabel, L"Service status: Starting...");
+        EnableWindow(installBtn, FALSE);
+        EnableWindow(toggleBtn, FALSE);
+        break;
+    case ServiceState::Stopping:
+        SetWindowTextW(statusLabel, L"Service status: Stopping...");
+        EnableWindow(installBtn, FALSE);
+        EnableWindow(toggleBtn, FALSE);
+        break;
+    }
 }
 
 void SetupWhitelistTooltip(HWND page) {
@@ -131,7 +215,14 @@ void UpdateStatusLine() {
         return;
     }
     if (!g_serviceOk) {
-        g_status = L"Status: Service unavailable - start EnergyStar Core in Services";
+        ServiceState state = QueryEnergyStarServiceState();
+        if (state == ServiceState::NotInstalled) {
+            g_status = L"Status: Service not installed - install it in Settings";
+        } else if (state == ServiceState::Stopped) {
+            g_status = L"Status: Service stopped - start it in Settings";
+        } else {
+            g_status = L"Status: Connecting to service…";
+        }
         g_active = false;
         return;
     }
@@ -272,6 +363,8 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
             SetupWhitelistTooltip(page);
         } else if (pageId == IDD_SETTINGS) {
             CheckDlgButton(page, IDC_LOGGING, g_logging ? BST_CHECKED : BST_UNCHECKED);
+            UpdateServiceUi(page);
+            SetTimer(page, kStatusTimer, 3000, nullptr);
         }
         return TRUE;
     }
@@ -307,13 +400,62 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
             RemoveSelected(page);
             PropSheet_Changed(GetParent(page), page);
             return TRUE;
+        case IDC_COPY_PATH: {
+            HWND list = GetDlgItem(page, IDC_LIST);
+            const int selected = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0));
+            if (selected >= 0 && selected < static_cast<int>(g_exclusions.size())) {
+                CopyTextToClipboard(page, g_exclusions[selected]);
+            }
+            return TRUE;
+        }
+        case IDC_SERVICE_INSTALL: {
+            ServiceState state = QueryEnergyStarServiceState();
+            if (state == ServiceState::NotInstalled) {
+                if (RunElevatedCommand(page, L"--install")) {
+                    MessageBoxW(page, L"EnergyStar service installed and started successfully.", L"EnergyStar", MB_OK | MB_ICONINFORMATION);
+                } else {
+                    MessageBoxW(page, L"Failed to install EnergyStar service. Administrator rights are required.", L"EnergyStar", MB_OK | MB_ICONWARNING);
+                }
+            } else {
+                if (MessageBoxW(page, L"Are you sure you want to remove the EnergyStar service?", L"EnergyStar", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                    if (RunElevatedCommand(page, L"--uninstall")) {
+                        MessageBoxW(page, L"EnergyStar service removed successfully.", L"EnergyStar", MB_OK | MB_ICONINFORMATION);
+                    } else {
+                        MessageBoxW(page, L"Failed to remove EnergyStar service. Administrator rights are required.", L"EnergyStar", MB_OK | MB_ICONWARNING);
+                    }
+                }
+            }
+            RefreshStatus();
+            UpdateServiceUi(page);
+            return TRUE;
+        }
+        case IDC_SERVICE_TOGGLE: {
+            ServiceState state = QueryEnergyStarServiceState();
+            if (state == ServiceState::Running) {
+                if (!StopEnergyStarService()) {
+                    RunElevatedCommand(page, L"--stop");
+                }
+            } else if (state == ServiceState::Stopped) {
+                if (!StartEnergyStarService()) {
+                    RunElevatedCommand(page, L"--start");
+                }
+            }
+            Sleep(250);
+            RefreshStatus();
+            UpdateServiceUi(page);
+            return TRUE;
+        }
         }
         return FALSE;
     }
     case WM_TIMER:
         if (wParam == kStatusTimer) {
-            RefreshStatus();
-            DisplayStatus(page);
+            if (pageId == IDD_POWER) {
+                RefreshStatus();
+                DisplayStatus(page);
+            } else if (pageId == IDD_SETTINGS) {
+                UpdateServiceUi(page);
+            }
             return TRUE;
         }
         return FALSE;
@@ -349,6 +491,8 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
                 DisplayStatus(page);
             } else if (pageId == IDD_WHITELIST) {
                 RefreshList(page);
+            } else if (pageId == IDD_SETTINGS) {
+                UpdateServiceUi(page);
             }
             SetWindowLongPtrW(page, DWLP_MSGRESULT, 0);
             return TRUE;
