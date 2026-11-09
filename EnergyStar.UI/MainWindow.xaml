@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="EnergyStar" Width="1120" Height="760" MinWidth="920" MinHeight="640"
         WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize"
+        Icon="pack://application:,,,/Assets/EnergyStar.ico"
         Background="Transparent" AllowsTransparency="True" Foreground="{DynamicResource TextPrimary}">
     <Window.Resources>
         <Style x:Key="NavButton" TargetType="Button">
@@ -66,9 +67,7 @@
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Margin="20,24,18,26">
                         <StackPanel Orientation="Horizontal">
-                            <Border Width="38" Height="38" CornerRadius="11" Background="{DynamicResource Accent}">
-                                <TextBlock Text="E" Foreground="White" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            </Border>
+                            <Image Width="38" Height="38" Source="pack://application:,,,/Assets/EnergyStar.ico" />
                             <StackPanel Margin="11,1,0,0" VerticalAlignment="Center">
                                 <TextBlock Text="EnergyStar" FontSize="16" FontWeight="Bold" />
                                 <TextBlock Text="POWER CONTROL" FontSize="9" Foreground="{DynamicResource TextSecondary}" />

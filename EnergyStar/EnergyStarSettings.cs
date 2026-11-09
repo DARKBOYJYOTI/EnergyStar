@@ -1,8 +1,7 @@
 using System.IO;
 using System.Text.Json;
-using EnergyStar;
 
-namespace EnergyStar.UI
+namespace EnergyStar
 {
     public sealed class EnergyStarSettings
     {
@@ -12,7 +11,7 @@ namespace EnergyStar.UI
         public List<string> ExcludedExecutables { get; set; } = new();
     }
 
-    internal static class SettingsStore
+    public static class SettingsStore
     {
         private static readonly string SettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EnergyStar", "settings.json");
@@ -22,7 +21,19 @@ namespace EnergyStar.UI
             try
             {
                 if (File.Exists(SettingsPath))
-                    return JsonSerializer.Deserialize<EnergyStarSettings>(File.ReadAllText(SettingsPath)) ?? new EnergyStarSettings();
+                {
+                    var settings = JsonSerializer.Deserialize<EnergyStarSettings>(File.ReadAllText(SettingsPath));
+                    if (settings is not null)
+                    {
+                        if (!Enum.IsDefined(settings.Mode)) settings.Mode = EnergyMode.Auto;
+                        if (settings.Theme is not ("System" or "Light" or "Dark")) settings.Theme = "System";
+                        settings.ExcludedExecutables ??= new List<string>();
+                        settings.ExcludedExecutables = settings.ExcludedExecutables
+                            .Where(path => !string.IsNullOrWhiteSpace(path))
+                            .ToList();
+                        return settings;
+                    }
+                }
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { }
             return new EnergyStarSettings();

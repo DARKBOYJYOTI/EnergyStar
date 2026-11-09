@@ -2,7 +2,7 @@ using System.Text;
 
 namespace EnergyStar
 {
-    internal static class Logger
+    public static class Logger
     {
         private static readonly object Sync = new();
         private static StreamWriter? writer;

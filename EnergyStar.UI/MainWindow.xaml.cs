@@ -24,6 +24,11 @@ namespace EnergyStar.UI
         private readonly Action<EnergyStarSettings> saveSettings;
         private readonly Action<string> applyTheme;
         private readonly ObservableCollection<string> exclusions;
+        private readonly System.Windows.Threading.DispatcherTimer statusTimer;
+        private TextBlock? statusLabel;
+        private TextBlock? powerLabel;
+        private TextBlock? managedLabel;
+        private Border? statusDot;
         private string currentPage = "Overview";
 
         public MainWindow(EnergyStarSettings settings, Action<EnergyStarSettings> saveSettings,
@@ -34,14 +39,11 @@ namespace EnergyStar.UI
             this.saveSettings = saveSettings;
             this.applyTheme = applyTheme;
             exclusions = new ObservableCollection<string>(settings.ExcludedExecutables);
-            EnergyManager.StatusChanged += OnStatusChanged;
+            statusTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            statusTimer.Tick += (_, _) => RefreshStatus();
+            statusTimer.Start();
             ShowPage("Overview");
         }
-
-        private void OnStatusChanged(EnergyStatus status) => Dispatcher.InvokeAsync(() =>
-        {
-            if (currentPage == "Overview") ShowPage("Overview");
-        });
 
         private void Navigate_Click(object sender, RoutedEventArgs e)
         {
@@ -67,7 +69,7 @@ namespace EnergyStar.UI
 
         private void BuildOverview()
         {
-            var status = EnergyManager.GetStatus();
+            var status = GetStatus();
             AddText("Smarter power, automatically.", 27, FontWeights.Bold, "TextPrimary", 0, 5);
             AddText("Choose how EnergyStar manages inactive applications.", 14, FontWeights.Normal, "TextSecondary", 0, 22);
 
@@ -75,12 +77,15 @@ namespace EnergyStar.UI
             var panel = new StackPanel();
             panel.Children.Add(AddText("CURRENT STATUS", 10, FontWeights.Bold, "TextSecondary", 0, 12));
             var state = new StackPanel { Orientation = Orientation.Horizontal };
-            var dot = new Border { Width = 11, Height = 11, CornerRadius = new CornerRadius(6), Background = Brush(status.IsEnabled ? "Success" : "TextSecondary"), Margin = new Thickness(0, 5, 10, 0) };
-            state.Children.Add(dot);
-            state.Children.Add(AddText(status.IsEnabled ? "Energy management is active" : "Energy management is paused", 19, FontWeights.SemiBold, "TextPrimary", 0, 0));
+            statusDot = new Border { Width = 11, Height = 11, CornerRadius = new CornerRadius(6), Background = Brush(status.IsEnabled ? "Success" : "TextSecondary"), Margin = new Thickness(0, 5, 10, 0) };
+            state.Children.Add(statusDot);
+            statusLabel = AddText(status.IsEnabled ? "Energy management is active" : "Energy management is paused", 19, FontWeights.SemiBold, "TextPrimary", 0, 0);
+            state.Children.Add(statusLabel);
             panel.Children.Add(state);
-            panel.Children.Add(AddText(status.OnBattery ? "Running on battery" : "Connected to power", 13, FontWeights.Normal, "TextSecondary", 21, 7));
-            panel.Children.Add(AddText($"{status.ManagedProcessCount} processes managed this session", 12, FontWeights.Normal, "TextSecondary", 0, 1));
+            powerLabel = AddText(status.OnBattery ? "Running on battery" : "Connected to power", 13, FontWeights.Normal, "TextSecondary", 21, 7);
+            panel.Children.Add(powerLabel);
+            managedLabel = AddText($"{status.ManagedProcessCount} processes managed this session", 12, FontWeights.Normal, "TextSecondary", 0, 1);
+            panel.Children.Add(managedLabel);
             statusCard.Child = panel;
             PageContent.Children.Add(statusCard);
 
@@ -116,6 +121,36 @@ namespace EnergyStar.UI
                 }
             };
             PageContent.Children.Add(tipCard);
+        }
+
+        private EnergyStatus GetStatus()
+        {
+            try { return EngineIpc.GetStatus(); }
+            catch
+            {
+                return new EnergyStatus { Mode = settings.Mode, OnBattery = false, IsEnabled = false, ManagedProcessCount = 0 };
+            }
+        }
+
+        private void RefreshStatus()
+        {
+            if (currentPage != "Overview" || statusLabel is null || powerLabel is null || managedLabel is null || statusDot is null)
+                return;
+            try
+            {
+                var status = EngineIpc.GetStatus();
+                statusLabel.Text = status.IsEnabled ? "Energy management is active" : "Energy management is paused";
+                statusDot.Background = Brush(status.IsEnabled ? "Success" : "TextSecondary");
+                powerLabel.Text = status.OnBattery ? "Running on battery" : "Connected to power";
+                managedLabel.Text = $"{status.ManagedProcessCount} processes managed this session";
+            }
+            catch
+            {
+                statusLabel.Text = "EnergyStar.Core.exe is not responding";
+                statusDot.Background = Brush("Warning");
+                powerLabel.Text = "Start EnergyStar again to reconnect";
+                managedLabel.Text = "Process status unavailable";
+            }
         }
 
         private void BuildExclusions()
@@ -226,7 +261,7 @@ namespace EnergyStar.UI
             PageContent.Children.Add(InfoCard("Off", "Stops throttling and restores tracked processes to their original priority class."));
             PageContent.Children.Add(InfoCard("Exclusions", "Browse for an executable to exclude it by full path. Excluded applications are never throttled by EnergyStar."));
             PageContent.Children.Add(InfoCard("Startup", $"Use Startup to create a logon task. Windows asks for administrator approval; the task definition is stored at {StartupTaskManager.TaskXmlPath}."));
-            PageContent.Children.Add(InfoCard("Logging", "Enable logging in Settings to write diagnostics beside EnergyStar.UI.exe. Normal mode writes no log."));
+            PageContent.Children.Add(InfoCard("Logging", "Enable logging in Settings to write diagnostics beside EnergyStar.Core.exe. Normal mode writes no log."));
             PageContent.Children.Add(InfoCard("Tray icon", "Closing this window hides EnergyStar in the notification area. Right-click its tray icon and choose Exit to stop it."));
             PageContent.Children.Add(InfoCard("Important", "Windows does not provide a supported API to read another app's EcoQoS state. EnergyStar may override an app's own EcoQoS choice; use Exclusions for apps that manage power themselves."));
         }
@@ -238,7 +273,7 @@ namespace EnergyStar.UI
             PageContent.Children.Add(InfoCard("Project", "EnergyStar uses Windows EcoQoS to reduce CPU impact for inactive applications."));
             PageContent.Children.Add(InfoCard("Original author", "This community fork builds on imbushuo/EnergyStar by Bingxing Wang. Original project: https://github.com/imbushuo/EnergyStar"));
             PageContent.Children.Add(InfoCard("License", "MIT-style license with Microsoft-specific terms. Read the included LICENSE file before redistributing."));
-            PageContent.Children.Add(InfoCard("Build", ".NET 10 desktop application. Portable and install-ready packages are provided separately."));
+            PageContent.Children.Add(InfoCard("Build", ".NET 10 desktop application. Setup executables and portable ZIPs are provided separately."));
         }
 
         private void SetLogging(bool enabled)
@@ -292,7 +327,7 @@ namespace EnergyStar.UI
 
         protected override void OnClosed(EventArgs e)
         {
-            EnergyManager.StatusChanged -= OnStatusChanged;
+            statusTimer.Stop();
             base.OnClosed(e);
         }
     }

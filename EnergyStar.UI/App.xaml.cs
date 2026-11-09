@@ -34,16 +34,25 @@ namespace EnergyStar.UI
             }
 
             backgroundMode = e.Args.Contains("--background", StringComparer.OrdinalIgnoreCase);
-            settings = SettingsStore.Load();
-            ApplyTheme(settings.Theme);
-            debugOverride = e.Args.Contains("--debug", StringComparer.OrdinalIgnoreCase);
-            EnergyManager.Start(settings.Mode, settings.ExcludedExecutables, settings.LoggingEnabled || debugOverride);
-            CreateTrayIcon();
+            try
+            {
+                settings = SettingsStore.Load();
+                ApplyTheme(settings.Theme);
+                debugOverride = e.Args.Contains("--debug", StringComparer.OrdinalIgnoreCase);
+                EngineIpc.EnsureRunning(debugOverride);
+                EngineIpc.Configure(settings, debugOverride);
+                CreateTrayIcon();
 
-            var mainWindow = new MainWindow(settings, SaveSettings, ApplyTheme);
-            MainWindow = mainWindow;
-            if (backgroundMode) mainWindow.Hide();
-            else mainWindow.Show();
+                var mainWindow = new MainWindow(settings, SaveSettings, ApplyTheme);
+                MainWindow = mainWindow;
+                if (backgroundMode) mainWindow.Hide();
+                else mainWindow.Show();
+            }
+            catch (Exception ex)
+            {
+                Forms.MessageBox.Show(ex.Message, "EnergyStar could not start", Forms.MessageBoxButtons.OK, Forms.MessageBoxIcon.Error);
+                Shutdown();
+            }
         }
 
         private void RunTaskMaintenance(Action action)
@@ -63,7 +72,7 @@ namespace EnergyStar.UI
         {
             settings = updated;
             SettingsStore.Save(settings);
-            EnergyManager.Configure(settings.Mode, settings.ExcludedExecutables, settings.LoggingEnabled || debugOverride);
+            EngineIpc.Configure(settings, debugOverride);
             ApplyTheme(settings.Theme);
         }
 
@@ -88,7 +97,7 @@ namespace EnergyStar.UI
             menu.Items.Add("Exit", null, (_, _) => Shutdown());
             trayIcon = new Forms.NotifyIcon
             {
-                Icon = SystemIcons.Application,
+                Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application,
                 Text = "EnergyStar",
                 ContextMenuStrip = menu,
                 Visible = true
@@ -110,7 +119,6 @@ namespace EnergyStar.UI
         protected override void OnExit(ExitEventArgs e)
         {
             trayIcon?.Dispose();
-            EnergyManager.Stop();
             base.OnExit(e);
         }
     }

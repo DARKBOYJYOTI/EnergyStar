@@ -21,31 +21,67 @@ jobs:
       - name: Restore solution
         run: dotnet restore EnergyStar.sln
 
-      - name: Publish x64
-        run: dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
+      - name: Publish x64 applications
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          if ($LASTEXITCODE -ne 0) { throw "UI x64 publish failed ($LASTEXITCODE)." }
+          dotnet publish EnergyStar.Core/EnergyStar.Core.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          if ($LASTEXITCODE -ne 0) { throw "Core x64 publish failed ($LASTEXITCODE)." }
 
-      - name: Publish ARM64
-        run: dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
+      - name: Publish ARM64 applications
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          if ($LASTEXITCODE -ne 0) { throw "UI ARM64 publish failed ($LASTEXITCODE)." }
+          dotnet publish EnergyStar.Core/EnergyStar.Core.csproj -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          if ($LASTEXITCODE -ne 0) { throw "Core ARM64 publish failed ($LASTEXITCODE)." }
 
-      - name: Prepare portable and install-ready packages
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Prepare portable packages and setup executables
         shell: pwsh
         run: |
           $publish = 'EnergyStar.UI/bin/Release/net10.0-windows'
+          $corePublish = 'EnergyStar.Core/bin/Release/net10.0-windows'
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
           foreach ($arch in @('win-x64', 'win-arm64')) {
-            $source = Join-Path $publish "$arch/publish"
             $portable = "dist/portable/$arch"
-            $installable = "dist/installable/$arch"
-            New-Item -ItemType Directory -Force -Path $portable, "$installable/publish" | Out-Null
-            Copy-Item "$source/*" $portable -Recurse -Force
-            Copy-Item "$source/*" "$installable/publish" -Recurse -Force
-            Copy-Item Package/Install-EnergyStar.ps1, Package/Uninstall-EnergyStar.ps1 $installable
+            New-Item -ItemType Directory -Force -Path $portable, 'dist/setups' | Out-Null
+            Copy-Item (Join-Path $publish "$arch/publish/EnergyStar.exe") $portable
+            Copy-Item (Join-Path $corePublish "$arch/publish/EnergyStar.Core.exe") $portable
             Compress-Archive -Path "$portable/*" -DestinationPath "dist/EnergyStar-portable-$arch.zip" -Force
-            Compress-Archive -Path "$installable/*" -DestinationPath "dist/EnergyStar-install-ready-$arch.zip" -Force
+            & $iscc "/DAppArch=$arch" "/DPayloadDir=$((Resolve-Path $portable).Path)" "/DOutputDir=$((Resolve-Path 'dist/setups').Path)" Package/EnergyStar.iss
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $arch (exit code $LASTEXITCODE)." }
           }
 
-      - name: Upload packages
+      - name: Upload portable x64
         uses: actions/upload-artifact@v4
         with:
-          name: EnergyStar-portable-and-install-ready
-          path: dist/*.zip
+          name: EnergyStar-portable-win-x64
+          path: dist/EnergyStar-portable-win-x64.zip
+          if-no-files-found: error
+
+      - name: Upload portable ARM64
+        uses: actions/upload-artifact@v4
+        with:
+          name: EnergyStar-portable-win-arm64
+          path: dist/EnergyStar-portable-win-arm64.zip
+          if-no-files-found: error
+
+      - name: Upload x64 setup executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: EnergyStar-Setup-win-x64
+          path: dist/setups/EnergyStar-Setup-win-x64.exe
+          if-no-files-found: error
+
+      - name: Upload ARM64 setup executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: EnergyStar-Setup-win-arm64
+          path: dist/setups/EnergyStar-Setup-win-arm64.exe
           if-no-files-found: error

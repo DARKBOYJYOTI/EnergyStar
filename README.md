@@ -18,9 +18,9 @@ dotnet restore EnergyStar.sln
 dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
 ```
 
-For ARM64, replace `win-x64` with `win-arm64`. The engine is a separate class library; the WPF UI references it without third-party UI dependencies.
+For ARM64, replace `win-x64` with `win-arm64`. `EnergyStar.Core.exe` owns process monitoring and runs independently; `EnergyStar.exe` controls it through a current-user-only local pipe.
 
-Run `EnergyStar.UI.exe --debug` to enable timestamped INFO, WARN, and ERROR entries in `EnergyStar.log` beside the executable. The UI can also toggle logging. Normal runs do not write a log file.
+Run `EnergyStar.exe --debug` to enable timestamped INFO, WARN, and ERROR entries in `EnergyStar.log` beside the core executable. The UI can also toggle logging. Normal runs do not write a log file.
 
 ## Modes and controls
 
@@ -33,15 +33,15 @@ Run `EnergyStar.UI.exe --debug` to enable timestamped INFO, WARN, and ERROR entr
 
 ## GitHub Actions
 
-Open **Actions**, select **Build EnergyStar**, then choose **Run workflow**. Builds do not start on pushes. Successful runs upload portable ZIPs and install-ready ZIPs for x64 and ARM64.
+Open **Actions**, select **Build EnergyStar**, then choose **Run workflow**. Builds do not start on pushes. Successful runs export separate setup executables and portable ZIPs for x64 and ARM64.
 
-The install-ready ZIP includes `Install-EnergyStar.ps1` and `Uninstall-EnergyStar.ps1`. Run both scripts as administrator. Installation copies the app to the system's Program Files folder. Uninstaller preserves `EnergyStar.log` and the startup task XML.
+GitHub Actions exports separate setup executables and portable ZIPs for x64 and ARM64. Each portable ZIP contains `EnergyStar.exe` and `EnergyStar.Core.exe`. Setup installs both under Program Files and creates Start Menu shortcuts.
 
 ## Known limitations
 
 - Windows does not expose a supported API to query whether an application manages its own EcoQoS state; EnergyStar cannot reliably detect that claim.
 - Windows does not expose a supported API to read another app's EcoQoS state. Use Exclusions for apps that manage their own power behavior.
-- The install-ready package creates a machine-wide Program Files installation; it does not create a signed MSI.
+- Setup is unsigned and requires Windows administrator approval to install under Program Files.
 
 ## License
 

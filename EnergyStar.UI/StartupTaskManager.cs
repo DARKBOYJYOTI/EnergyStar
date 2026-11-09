@@ -36,7 +36,8 @@ namespace EnergyStar.UI
 
         private static void RequestElevated(string argument)
         {
-            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("Could not find EnergyStar executable path.");
+            var executable = Environment.ProcessPath
+                ?? throw new InvalidOperationException("Could not find EnergyStar.exe path.");
             Process.Start(new ProcessStartInfo(executable, argument)
             {
                 UseShellExecute = true,
@@ -48,7 +49,9 @@ namespace EnergyStar.UI
         {
             _ = new SecurityIdentifier(userSid);
             Directory.CreateDirectory(Path.GetDirectoryName(TaskXmlPath)!);
-            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("Could not find EnergyStar executable path.");
+            var executable = Path.Combine(AppContext.BaseDirectory, "EnergyStar.Core.exe");
+            if (!File.Exists(executable))
+                throw new FileNotFoundException("EnergyStar.Core.exe is missing beside EnergyStar.exe.", executable);
             XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
             var task = new XDocument(new XElement(ns + "Task",
                 new XAttribute("version", "1.4"),
@@ -78,7 +81,7 @@ namespace EnergyStar.UI
                     new XAttribute("Context", "EnergyStarUser"),
                     new XElement(ns + "Exec",
                         new XElement(ns + "Command", executable),
-                        new XElement(ns + "Arguments", "--background"),
+                    new XElement(ns + "Arguments"),
                         new XElement(ns + "WorkingDirectory", Path.GetDirectoryName(executable))))));
             task.Save(TaskXmlPath);
             RunSchtasks($"/Create /TN \"{TaskName}\" /XML \"{TaskXmlPath}\" /F");

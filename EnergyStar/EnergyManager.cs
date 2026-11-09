@@ -11,7 +11,7 @@ namespace EnergyStar
         {
             // Not ourselves
             "EnergyStar.exe".ToLowerInvariant(),
-            "EnergyStar.UI.exe".ToLowerInvariant(),
+            "EnergyStar.Core.exe".ToLowerInvariant(),
             // Edge has energy awareness
             "msedge.exe",
             "WebViewHost.exe".ToLowerInvariant(),
