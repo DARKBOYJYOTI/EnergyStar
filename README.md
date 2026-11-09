@@ -5,7 +5,7 @@
 <h1 align="center">EnergyStar</h1>
 
 <p align="center">
-  Lightweight background efficiency and battery optimizer for Windows 11 and 10.
+  Lightweight background efficiency, battery, and desktop responsiveness optimizer for Windows 11 and 10.
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 ## Overview
 
-EnergyStar keeps your laptop running cool and extends battery life by applying Windows EcoQoS (Efficiency Mode) and idle priority to background applications. When you switch between windows, your active application and its child processes automatically receive full CPU performance.
+EnergyStar keeps your system running cool, extends laptop battery life, and boosts foreground app smoothness and desktop responsiveness by applying Windows EcoQoS (Efficiency Mode) and idle priority to background applications. When you switch between windows, your active application and its child processes automatically receive full CPU performance.
 
 <p align="center">
   <img src="Assets/ui.png" alt="EnergyStar Interface" width="320">
@@ -36,9 +36,10 @@ Available as both a **standalone single-executable portable build** and a **guid
 
 ## Features
 
-- **Dynamic EcoQoS**: Throttles inactive background apps without affecting foreground responsiveness.
-- **Three Power Modes**: Auto (battery only), Always on, or Off.
-- **Smart Whitelist**: Keep selected apps at full speed. Easily add executables or desktop shortcuts (`.lnk`).
+- **Foreground Smoothness & Desktop Responsiveness**: Boosts active foreground applications with full CPU performance and immediate priority while reducing background contention.
+- **Dynamic EcoQoS**: Throttles inactive background applications into Windows Efficiency Mode to reduce CPU load and heat.
+- **Adaptive Power Modes**: Auto (battery only on laptops), Always on (default on desktop systems for maximum responsiveness), or Off.
+- **Smart Whitelist**: Keep selected apps running at unrestricted speed. Add executables or Start Menu shortcuts (`.lnk`) directly.
 - **Single Native Binary**: UI, background service, and session event agent are hosted in a single lightweight C++ binary with no dependencies or runtimes.
 - **Privacy-First**: No telemetry, no background network calls, and 100% local configuration.
 

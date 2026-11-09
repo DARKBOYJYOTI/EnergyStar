@@ -297,9 +297,21 @@ void ScanProcesses() {
     }
 }
 
+bool HasSystemBattery() {
+    SYSTEM_POWER_STATUS power{};
+    if (GetSystemPowerStatus(&power)) {
+        if (power.BatteryFlag & 128) return false;
+        if (power.BatteryFlag == 255 && power.BatteryLifePercent == 255) return false;
+        return true;
+    }
+    return false;
+}
+
 void LoadConfig() {
     std::lock_guard guard(g_lock);
     g_config.logging = 0;
+    const bool hasBattery = HasSystemBattery();
+    g_config.mode = hasBattery ? PowerMode::Automatic : PowerMode::AlwaysOn;
     std::wifstream config(std::filesystem::path(g_dataDir) / L"EnergyStar.conf");
     std::wstring line;
     while (std::getline(config, line)) {
@@ -308,6 +320,9 @@ void LoadConfig() {
         else if (line == L"mode=auto") g_config.mode = PowerMode::Automatic;
         else if (line == L"log=on") g_config.logging = 1;
         else if (line == L"log=off") g_config.logging = 0;
+    }
+    if (!hasBattery && g_config.mode == PowerMode::Automatic) {
+        g_config.mode = PowerMode::AlwaysOn;
     }
     g_config.exclusionCount = 0;
     std::wifstream whitelist(std::filesystem::path(g_dataDir) / L"whitelist.conf");
@@ -341,7 +356,11 @@ bool SaveConfig(const PipeMessage& input) {
     {
         std::wofstream out(configTemp);
         if (!out) return false;
-        out << L"mode=" << (input.mode == PowerMode::Off ? L"off" : input.mode == PowerMode::AlwaysOn ? L"always" : L"auto") << L"\nlog=" << (input.logging ? L"on" : L"off") << L"\n";
+        PowerMode effectiveMode = input.mode;
+        if (!HasSystemBattery() && effectiveMode == PowerMode::Automatic) {
+            effectiveMode = PowerMode::AlwaysOn;
+        }
+        out << L"mode=" << (effectiveMode == PowerMode::Off ? L"off" : effectiveMode == PowerMode::AlwaysOn ? L"always" : L"auto") << L"\nlog=" << (input.logging ? L"on" : L"off") << L"\n";
     }
     {
         std::wofstream out(listTemp);
@@ -400,7 +419,8 @@ DWORD WINAPI PipeThread(void*) {
                 response = g_config;
                 SYSTEM_POWER_STATUS power{};
                 GetSystemPowerStatus(&power);
-                response.onBattery = power.ACLineStatus == 0;
+                const bool hasBattery = HasSystemBattery();
+                response.onBattery = (power.ACLineStatus == 0 && hasBattery);
                 response.enabled = response.mode == PowerMode::AlwaysOn || (response.mode == PowerMode::Automatic && response.onBattery);
                 response.processCount = g_managedCount.load();
                 response.foregroundPid = saved ? 1 : 0;
@@ -495,9 +515,10 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
         waitResult = WaitForMultipleObjects(2, events, FALSE, 500);
         LaunchAgents();
         SYSTEM_POWER_STATUS power{}; GetSystemPowerStatus(&power);
+        const bool hasBattery = HasSystemBattery();
         PowerMode mode;
         { std::lock_guard guard(g_lock); mode = g_config.mode; }
-        bool enabled = mode == PowerMode::AlwaysOn || (mode == PowerMode::Automatic && power.ACLineStatus == 0);
+        bool enabled = mode == PowerMode::AlwaysOn || (mode == PowerMode::Automatic && power.ACLineStatus == 0 && hasBattery);
         if (g_configChanged.exchange(false)) {
             std::vector<DWORD> restore;
             for (const auto& item : g_managed) if (IsExcluded(item.first)) restore.push_back(item.first);
@@ -568,7 +589,7 @@ bool InstallService() {
             binaryPath.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) != FALSE;
         ok = ClearFailureActions(service) && ok;
         ok = SetServicePermissions(service) && ok;
-        SERVICE_DESCRIPTIONW description{ const_cast<LPWSTR>(L"Keeps background applications efficient without slowing the active application.") };
+        SERVICE_DESCRIPTIONW description{ const_cast<LPWSTR>(L"Keeps background applications efficient and boosts desktop responsiveness without slowing the active application.") };
         ChangeServiceConfig2W(service, SERVICE_CONFIG_DESCRIPTION, &description);
         SERVICE_STATUS_PROCESS status{};
         DWORD bytes = 0;

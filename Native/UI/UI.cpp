@@ -211,6 +211,16 @@ bool CallService(PipeMessage& message) {
     return ok && message.magic == kProtocolMagic && message.foregroundPid != 0;
 }
 
+bool HasSystemBattery() {
+    SYSTEM_POWER_STATUS power{};
+    if (GetSystemPowerStatus(&power)) {
+        if (power.BatteryFlag & 128) return false;
+        if (power.BatteryFlag == 255 && power.BatteryLifePercent == 255) return false;
+        return true;
+    }
+    return false;
+}
+
 void UpdateStatusLine() {
     if (GetTickCount64() < g_savedUntil) {
         g_status = L"Status: Settings saved.";
@@ -234,6 +244,10 @@ void UpdateStatusLine() {
         g_status = L"Status: Inactive - power control is off";
         return;
     }
+    if (!HasSystemBattery()) {
+        g_status = L"Status: Active - desktop optimization enabled";
+        return;
+    }
     g_status = power.ACLineStatus == 0 ? L"Status: Active - running on battery" : L"Status: Active - connected to power";
 }
 
@@ -246,6 +260,21 @@ void RefreshStatus() {
 }
 
 void LoadSettings() {
+    const bool hasBattery = HasSystemBattery();
+    g_mode = hasBattery ? PowerMode::Automatic : PowerMode::AlwaysOn;
+    g_logging = false;
+    std::wifstream config(std::filesystem::path(g_dataDir) / L"EnergyStar.conf");
+    std::wstring line;
+    while (std::getline(config, line)) {
+        if (line == L"mode=auto") g_mode = PowerMode::Automatic;
+        else if (line == L"mode=always") g_mode = PowerMode::AlwaysOn;
+        else if (line == L"mode=off") g_mode = PowerMode::Off;
+        else if (line == L"log=on") g_logging = true;
+        else if (line == L"log=off") g_logging = false;
+    }
+    if (!hasBattery && g_mode == PowerMode::Automatic) {
+        g_mode = PowerMode::AlwaysOn;
+    }
     PipeMessage message{};
     message.action = PipeAction::Status;
     g_serviceOk = CallService(message);
@@ -255,6 +284,9 @@ void LoadSettings() {
         return;
     }
     g_mode = message.mode;
+    if (!hasBattery && g_mode == PowerMode::Automatic) {
+        g_mode = PowerMode::AlwaysOn;
+    }
     g_logging = message.logging != 0;
     g_active = message.enabled != 0;
     g_exclusions.clear();
@@ -264,6 +296,10 @@ void LoadSettings() {
 }
 
 bool SaveSettings(HWND owner) {
+    const bool hasBattery = HasSystemBattery();
+    if (!hasBattery && g_mode == PowerMode::Automatic) {
+        g_mode = PowerMode::AlwaysOn;
+    }
     PipeMessage message{};
     message.action = PipeAction::Configure;
     message.mode = g_mode;
@@ -294,14 +330,30 @@ void DisplayStatus(HWND page) {
     SetDlgItemTextW(page, IDC_STATUS, g_status.c_str());
     ServiceState state = QueryEnergyStarServiceState();
     const bool serviceRunning = (state == ServiceState::Running);
+    const bool hasBattery = HasSystemBattery();
+
     HWND autoRadio = GetDlgItem(page, IDC_MODE_AUTO);
+    HWND autoDesc = GetDlgItem(page, IDC_MODE_AUTO_DESC);
     HWND alwaysRadio = GetDlgItem(page, IDC_MODE_ALWAYS);
     HWND offRadio = GetDlgItem(page, IDC_MODE_OFF);
     HWND actionBtn = GetDlgItem(page, IDC_POWER_ACTION);
 
-    if (autoRadio) EnableWindow(autoRadio, serviceRunning);
+    if (autoRadio) EnableWindow(autoRadio, serviceRunning && hasBattery);
+    if (autoDesc) {
+        EnableWindow(autoDesc, serviceRunning && hasBattery);
+        if (!hasBattery) {
+            SetWindowTextW(autoDesc, L"Requires battery (disabled on desktop PC).");
+        } else {
+            SetWindowTextW(autoDesc, L"Optimize background apps while on battery.");
+        }
+    }
     if (alwaysRadio) EnableWindow(alwaysRadio, serviceRunning);
     if (offRadio) EnableWindow(offRadio, serviceRunning);
+
+    if (!hasBattery && g_mode == PowerMode::Automatic) {
+        g_mode = PowerMode::AlwaysOn;
+    }
+    CheckRadioButton(page, IDC_MODE_AUTO, IDC_MODE_OFF, ModeControlId(g_mode));
 
     if (actionBtn) {
         if (state == ServiceState::NotInstalled) {
@@ -348,12 +400,12 @@ void RefreshList(HWND page) {
 const wchar_t kHelpText[] =
     L"EnergyStar Quick Start & User Guide\r\n\r\n"
     L"1. HOW ENERGYSTAR WORKS\r\n"
-    L"EnergyStar keeps background applications efficient without slowing down your active work. It uses Windows EcoQoS (Efficiency Mode) and idle process priority on background apps while boosting the active foreground application and its worker threads.\r\n\r\n"
+    L"EnergyStar keeps your system running cool, extends laptop battery life, and boosts foreground app smoothness and desktop responsiveness. It applies Windows EcoQoS (Efficiency Mode) and idle process priority to background applications while automatically granting full CPU performance and high priority to your active foreground window and its child processes.\r\n\r\n"
     L"2. POWER MODES (Power Tab)\r\n"
     L"• Auto - battery only:\r\n"
-    L"  Recommended for laptops. Power throttling only activates when your device is running on battery. When connected to AC power, applications run unrestricted.\r\n"
+    L"  Recommended for laptops. Power throttling only activates when your device is running on battery. When connected to AC power, applications run unrestricted. Disabled on desktop systems without battery.\r\n"
     L"• Always on:\r\n"
-    L"  Keeps background power throttling active continuously, on both battery and AC power. Ideal for maximum thermal efficiency and quiet fan speeds.\r\n"
+    L"  Keeps power optimization and background throttling active at all times. Default and recommended on desktop PCs to ensure maximum desktop responsiveness, smooth multitasking, and lower temperatures.\r\n"
     L"• Off:\r\n"
     L"  Completely disables power control. All processes run at standard Windows defaults.\r\n\r\n"
     L"3. WHITELIST (Whitelist Tab)\r\n"
@@ -379,7 +431,7 @@ const wchar_t kHelpText[] =
 
 const wchar_t kAboutText[] =
     L"EnergyStar 2.0.0\r\n"
-    L"Native Windows Efficiency & Battery Optimizer\r\n\r\n"
+    L"Native Windows Efficiency, Battery & Desktop Responsiveness Optimizer\r\n\r\n"
     L"Made with ❤️ by darkboyjyoti\r\n\r\n"
     L"PROJECT REPOSITORY:\r\n"
     L"https://github.com/DARKBOYJYOTI/EnergyStar\r\n\r\n"
@@ -558,6 +610,7 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
         const int id = LOWORD(wParam);
         switch (id) {
         case IDC_MODE_AUTO:
+            if (!HasSystemBattery()) return TRUE;
             g_mode = PowerMode::Automatic;
             CheckRadioButton(page, IDC_MODE_AUTO, IDC_MODE_OFF, IDC_MODE_AUTO);
             PropSheet_Changed(GetParent(page), page);

@@ -12,7 +12,7 @@ BEGIN
     CONTROL         "Auto - battery only", IDC_MODE_AUTO, "Button", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 14, 20, 149, 10
     CONTROL         "Always on", IDC_MODE_ALWAYS, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 14, 56, 149, 10
     CONTROL         "Off", IDC_MODE_OFF, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 14, 92, 149, 10
-    LTEXT           "Optimize background apps while on battery.", -1, 24, 32, 149, 20
+    LTEXT           "Optimize background apps while on battery.", IDC_MODE_AUTO_DESC, 24, 32, 149, 20
     LTEXT           "Keep power control active at all times.", -1, 24, 68, 149, 20
     LTEXT           "Disable power control completely.", -1, 24, 104, 149, 20
     GROUPBOX        "Status", -1, 7, 138, 173, 49
