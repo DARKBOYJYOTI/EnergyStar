@@ -92,12 +92,12 @@ Theme CreateTheme(HWND window) {
     theme.heading = MakeFont(family, 13, dpi, FW_SEMIBOLD);
     theme.semibold = MakeFont(family, 10, dpi, FW_SEMIBOLD);
     theme.body = MakeFont(family, 10, dpi, FW_NORMAL);
-    theme.small = MakeFont(family, 9, dpi, FW_NORMAL);
+    theme.caption = MakeFont(family, 9, dpi, FW_NORMAL);
     return theme;
 }
 
 void DestroyTheme(Theme& theme) {
-    for (HFONT* font : { &theme.title, &theme.heading, &theme.semibold, &theme.body, &theme.small }) {
+    for (HFONT* font : { &theme.title, &theme.heading, &theme.semibold, &theme.body, &theme.caption }) {
         if (*font) { DeleteObject(*font); *font = nullptr; }
     }
 }

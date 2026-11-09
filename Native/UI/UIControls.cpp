@@ -41,7 +41,7 @@ void DrawLabel(HDC dc, HFONT font, COLORREF color, int left, int top, int width,
     PaintText(dc, font, color, area, text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 }
 
-int Mix(int value) { return static_cast<int>(std::lround(value)); }
+int Mix(double value) { return static_cast<int>(std::lround(value)); }
 }
 
 void EnableHover(HWND control) {
@@ -118,7 +118,7 @@ void DrawModeCard(const Theme& theme, const DRAWITEMSTRUCT* draw, const wchar_t*
     const int textLeft = rect.left + Dpi(theme, 58);
     const int textWidth = static_cast<int>(rect.right - textLeft - Dpi(theme, 20));
     DrawLabel(draw->hDC, theme.semibold, theme.text, textLeft, rect.top + Dpi(theme, 16), textWidth, Dpi(theme, 22), title);
-    DrawLabel(draw->hDC, theme.small, theme.textSecondary, textLeft, rect.top + Dpi(theme, 42), textWidth, Dpi(theme, 20), detail);
+    DrawLabel(draw->hDC, theme.caption, theme.textSecondary, textLeft, rect.top + Dpi(theme, 42), textWidth, Dpi(theme, 20), detail);
 }
 
 void DrawToggleCard(const Theme& theme, const DRAWITEMSTRUCT* draw, const wchar_t* title, const wchar_t* detail) {
@@ -130,7 +130,7 @@ void DrawToggleCard(const Theme& theme, const DRAWITEMSTRUCT* draw, const wchar_
     const int textLeft = rect.left + Dpi(theme, 24);
     const int textWidth = static_cast<int>(rect.right - textLeft - Dpi(theme, 110));
     DrawLabel(draw->hDC, theme.semibold, theme.text, textLeft, rect.top + Dpi(theme, 16), textWidth, Dpi(theme, 22), title);
-    DrawLabel(draw->hDC, theme.small, theme.textSecondary, textLeft, rect.top + Dpi(theme, 42), textWidth, Dpi(theme, 20), detail);
+    DrawLabel(draw->hDC, theme.caption, theme.textSecondary, textLeft, rect.top + Dpi(theme, 42), textWidth, Dpi(theme, 20), detail);
 
     const int pillWidth = Dpi(theme, 46);
     const int pillHeight = Dpi(theme, 26);

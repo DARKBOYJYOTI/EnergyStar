@@ -10,7 +10,7 @@ struct Theme {
     COLORREF navHover{}, navSelected{};
     COLORREF statusActive{}, statusInactive{};
     COLORREF divider{}, button{}, buttonHover{}, buttonPressed{};
-    HFONT title{}, heading{}, semibold{}, body{}, small{};
+    HFONT title{}, heading{}, semibold{}, body{}, caption{};
 };
 
 Theme CreateTheme(HWND window);

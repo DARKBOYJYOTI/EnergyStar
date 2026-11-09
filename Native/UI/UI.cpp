@@ -102,8 +102,9 @@ void RefreshList() {
     SendMessageW(g_list, LB_RESETCONTENT, 0, 0);
     for (const auto& path : g_exclusions)
         SendMessageW(g_list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(path.c_str()));
-    ShowWindow(g_list, g_exclusions.empty() ? SW_HIDE : SW_SHOW);
-    ShowWindow(g_empty, g_exclusions.empty() ? SW_SHOW : SW_HIDE);
+    const bool visible = g_page == kPageWhitelist && !g_exclusions.empty();
+    ShowWindow(g_list, visible ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_empty, g_page == kPageWhitelist && g_exclusions.empty() ? SW_SHOW : SW_HIDE);
     InvalidateRect(g_window, &g_listCard, FALSE);
 }
 
@@ -161,7 +162,7 @@ void BrowseApplication() {
     COMDLG_FILTERSPEC filters[] = { { L"Applications", L"*.exe" } };
     DWORD options = 0;
     dialog->GetOptions(&options);
-    dialog->SetOptions(options | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    dialog->SetOptions(options | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM);
     dialog->SetFileTypes(1, filters);
     dialog->SetTitle(L"Choose an application to exclude");
     if (FAILED(dialog->Show(g_window))) { dialog->Release(); return; }
@@ -256,7 +257,7 @@ void Layout() {
     const int saveWidth = S(172), saveHeight = S(42);
     MoveWindow(g_save, width - pad - saveWidth, footerTop + (footerHeight - saveHeight) / 2, saveWidth, saveHeight, TRUE);
     ShowPageControls();
-    InvalidateRect(g_window, nullptr, TRUE);
+    InvalidateRect(g_window, nullptr, FALSE);
 }
 
 void PaintSidebar(HDC dc, const RECT& client) {
@@ -288,27 +289,27 @@ void PaintHeader(HDC dc, const RECT& client) {
     RECT titleArea{ contentX, S(26), client.right - S(40), S(26) + S(38) };
     PaintText(dc, g_theme.title, g_theme.text, titleArea, title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     RECT subtitleArea{ contentX, S(66), client.right - S(40), S(66) + S(24) };
-    PaintText(dc, g_theme.small, g_theme.textSecondary, subtitleArea, subtitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    PaintText(dc, g_theme.caption, g_theme.textSecondary, subtitleArea, subtitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
 void PaintPageBody(HDC dc, const RECT& client) {
     if (g_page == kPagePower) {
         RECT note{ S(264), S(118) + 3 * (S(88) + S(14)) + S(4), client.right - S(40), S(190) + 3 * (S(88) + S(14)) };
-        PaintText(dc, g_theme.small, g_theme.textTertiary, note,
+        PaintText(dc, g_theme.caption, g_theme.textTertiary, note,
             L"Changes apply immediately. Auto mode only throttles while running on battery.", DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else if (g_page == kPageSettings) {
         const int left = S(264);
         const int top = S(118) + S(84) + S(26);
         const std::wstring directory = DataDirectory();
         RECT logLabel{ left, top, client.right - S(40), top + S(20) };
-        PaintText(dc, g_theme.small, g_theme.textTertiary, logLabel, L"LOG FILE", DT_LEFT | DT_TOP | DT_SINGLELINE);
+        PaintText(dc, g_theme.caption, g_theme.textTertiary, logLabel, L"LOG FILE", DT_LEFT | DT_TOP | DT_SINGLELINE);
         RECT logPath{ left, top + S(20), client.right - S(40), top + S(42) };
-        PaintText(dc, g_theme.small, g_theme.textSecondary, logPath, (directory + L"\\EnergyStar.log").c_str(),
+        PaintText(dc, g_theme.caption, g_theme.textSecondary, logPath, (directory + L"\\EnergyStar.log").c_str(),
             DT_LEFT | DT_TOP | DT_SINGLELINE | DT_PATH_ELLIPSIS);
         RECT configLabel{ left, top + S(56), client.right - S(40), top + S(76) };
-        PaintText(dc, g_theme.small, g_theme.textTertiary, configLabel, L"CONFIGURATION", DT_LEFT | DT_TOP | DT_SINGLELINE);
+        PaintText(dc, g_theme.caption, g_theme.textTertiary, configLabel, L"CONFIGURATION", DT_LEFT | DT_TOP | DT_SINGLELINE);
         RECT configPath{ left, top + S(76), client.right - S(40), top + S(98) };
-        PaintText(dc, g_theme.small, g_theme.textSecondary, configPath, (directory + L"\\EnergyStar.conf").c_str(),
+        PaintText(dc, g_theme.caption, g_theme.textSecondary, configPath, (directory + L"\\EnergyStar.conf").c_str(),
             DT_LEFT | DT_TOP | DT_SINGLELINE | DT_PATH_ELLIPSIS);
     } else if (g_page == kPageAbout) {
         const std::wstring text =
@@ -340,7 +341,7 @@ void PaintFooter(HDC dc, const RECT& client) {
 
     if (g_toast) {
         RECT toast{ client.right - S(40) - S(172) - S(96), middle - S(14), client.right - S(40) - S(172) - S(8), middle + S(14) };
-        PaintText(dc, g_theme.small, g_theme.statusActive, toast, L"Saved", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        PaintText(dc, g_theme.caption, g_theme.statusActive, toast, L"Saved", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     }
 }
 
@@ -372,8 +373,6 @@ void ApplyDwm(HWND window) {
     DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
     const BOOL dark = g_theme.dark ? TRUE : FALSE;
     DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
-    const DWORD backdrop = 2;
-    DwmSetWindowAttribute(window, 38, &backdrop, sizeof(backdrop));
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -388,30 +387,30 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             S(32), S(32), LR_DEFAULTSIZE));
         ApplyDwm(window);
 
-        g_nav[0] = AddControl(L"BUTTON", L"Power", BS_OWNERDRAW, kNavPower, g_theme.semibold);
-        g_nav[1] = AddControl(L"BUTTON", L"Whitelist", BS_OWNERDRAW, kNavWhitelist, g_theme.semibold);
-        g_nav[2] = AddControl(L"BUTTON", L"Settings", BS_OWNERDRAW, kNavSettings, g_theme.semibold);
-        g_nav[3] = AddControl(L"BUTTON", L"About", BS_OWNERDRAW, kNavAbout, g_theme.semibold);
+        g_nav[0] = AddControl(L"BUTTON", L"Power", BS_OWNERDRAW | WS_TABSTOP, kNavPower, g_theme.semibold);
+        g_nav[1] = AddControl(L"BUTTON", L"Whitelist", BS_OWNERDRAW | WS_TABSTOP, kNavWhitelist, g_theme.semibold);
+        g_nav[2] = AddControl(L"BUTTON", L"Settings", BS_OWNERDRAW | WS_TABSTOP, kNavSettings, g_theme.semibold);
+        g_nav[3] = AddControl(L"BUTTON", L"About", BS_OWNERDRAW | WS_TABSTOP, kNavAbout, g_theme.semibold);
         for (HWND nav : g_nav) EnableHover(nav);
 
-        g_auto = AddControl(L"BUTTON", L"Auto · battery only", BS_AUTORADIOBUTTON | BS_OWNERDRAW | WS_GROUP, kModeAuto, g_theme.body);
-        g_always = AddControl(L"BUTTON", L"Always on", BS_AUTORADIOBUTTON | BS_OWNERDRAW, kModeAlways, g_theme.body);
-        g_off = AddControl(L"BUTTON", L"Off", BS_AUTORADIOBUTTON | BS_OWNERDRAW, kModeOff, g_theme.body);
+        g_auto = AddControl(L"BUTTON", L"Auto · battery only", BS_AUTORADIOBUTTON | BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, kModeAuto, g_theme.body);
+        g_always = AddControl(L"BUTTON", L"Always on", BS_AUTORADIOBUTTON | BS_OWNERDRAW | WS_TABSTOP, kModeAlways, g_theme.body);
+        g_off = AddControl(L"BUTTON", L"Off", BS_AUTORADIOBUTTON | BS_OWNERDRAW | WS_TABSTOP, kModeOff, g_theme.body);
         for (HWND card : { g_auto, g_always, g_off }) EnableHover(card);
 
-        g_toggle = AddControl(L"BUTTON", L"Enable debug log", BS_AUTOCHECKBOX | BS_OWNERDRAW, kToggleLog, g_theme.body);
+        g_toggle = AddControl(L"BUTTON", L"Enable debug log", BS_AUTOCHECKBOX | BS_OWNERDRAW | WS_TABSTOP, kToggleLog, g_theme.body);
         EnableHover(g_toggle);
 
-        g_list = AddControl(L"LISTBOX", L"", LBS_OWNERDRAWFIXED | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, kList, g_theme.body);
+        g_list = AddControl(L"LISTBOX", L"", LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, kList, g_theme.body);
         SendMessageW(g_list, LB_SETITEMHEIGHT, 0, S(34));
-        g_empty = AddControl(L"STATIC", L"No applications yet · add one below", SS_CENTER, kEmpty, g_theme.small);
+        g_empty = AddControl(L"STATIC", L"No applications yet · add one below", SS_CENTER, kEmpty, g_theme.caption);
 
-        g_add = AddControl(L"BUTTON", L"Add application…", BS_OWNERDRAW, kAdd, g_theme.semibold);
-        g_remove = AddControl(L"BUTTON", L"Remove", BS_OWNERDRAW, kRemove, g_theme.semibold);
-        g_save = AddControl(L"BUTTON", L"Save changes", BS_OWNERDRAW | BS_DEFPUSHBUTTON, kSave, g_theme.semibold);
+        g_add = AddControl(L"BUTTON", L"Add application…", BS_OWNERDRAW | WS_TABSTOP, kAdd, g_theme.semibold);
+        g_remove = AddControl(L"BUTTON", L"Remove", BS_OWNERDRAW | WS_TABSTOP, kRemove, g_theme.semibold);
+        g_save = AddControl(L"BUTTON", L"Save changes", BS_OWNERDRAW | BS_DEFPUSHBUTTON | WS_TABSTOP, kSave, g_theme.semibold);
         for (HWND button : { g_add, g_remove, g_save }) EnableHover(button);
 
-        g_version = AddControl(L"STATIC", L"Version 2.0.0", SS_LEFT, kVersion, g_theme.small);
+        g_version = AddControl(L"STATIC", L"Version 2.0.0", SS_LEFT, kVersion, g_theme.caption);
 
         LoadSettings();
         Layout();
@@ -426,10 +425,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_theme = CreateTheme(window);
         for (HWND control : { g_auto, g_always, g_off, g_toggle, g_list, g_add, g_remove, g_save })
             if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.body), TRUE);
-        if (g_version) SendMessageW(g_version, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.small), TRUE);
-        if (g_empty) SendMessageW(g_empty, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.small), TRUE);
+        if (g_version) SendMessageW(g_version, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.caption), TRUE);
+        if (g_empty) SendMessageW(g_empty, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.caption), TRUE);
         for (HWND nav : g_nav)
             if (nav) SendMessageW(nav, WM_SETFONT, reinterpret_cast<WPARAM>(g_theme.semibold), TRUE);
+        if (g_list) SendMessageW(g_list, LB_SETITEMHEIGHT, 0, S(34));
         const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
         SetWindowPos(window, nullptr, suggested->left, suggested->top,
             suggested->right - suggested->left, suggested->bottom - suggested->top,
