@@ -1,7 +1,6 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <dwmapi.h>
-#include <shlobj.h>
 #include <shobjidl.h>
 #include <string>
 #include <vector>
@@ -55,24 +54,6 @@ bool CallService(PipeMessage& message) {
         ReadFile(pipe, &message, sizeof(message), &read, nullptr) && read == sizeof(message);
     CloseHandle(pipe);
     return ok && message.magic == kProtocolMagic && message.foregroundPid != 0;
-}
-
-std::wstring DataDirectory() {
-    wchar_t module[MAX_PATH]{};
-    if (GetModuleFileNameW(nullptr, module, MAX_PATH)) {
-        std::wstring folder(module);
-        const size_t slash = folder.find_last_of(L"\\/");
-        if (slash != std::wstring::npos) folder.resize(slash);
-        if (GetFileAttributesW((folder + L"\\EnergyStar.installed").c_str()) == INVALID_FILE_ATTRIBUTES)
-            return folder;
-    }
-    PWSTR known = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_CREATE, nullptr, &known))) {
-        std::wstring folder = std::wstring(known) + L"\\EnergyStar";
-        CoTaskMemFree(known);
-        return folder;
-    }
-    return L".";
 }
 
 void UpdateStatusLine() {
@@ -299,17 +280,21 @@ void PaintPageBody(HDC dc, const RECT& client) {
     } else if (g_page == kPageSettings) {
         const int left = S(264);
         const int top = S(118) + S(84) + S(26);
-        const std::wstring directory = DataDirectory();
-        RECT logLabel{ left, top, client.right - S(40), top + S(20) };
+        const int right = client.right - S(40);
+        RECT logLabel{ left, top, right, top + S(20) };
         PaintText(dc, g_theme.caption, g_theme.textTertiary, logLabel, L"LOG FILE", DT_LEFT | DT_TOP | DT_SINGLELINE);
-        RECT logPath{ left, top + S(20), client.right - S(40), top + S(42) };
-        PaintText(dc, g_theme.caption, g_theme.textSecondary, logPath, (directory + L"\\EnergyStar.log").c_str(),
-            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_PATH_ELLIPSIS);
-        RECT configLabel{ left, top + S(56), client.right - S(40), top + S(76) };
+        RECT logPath{ left, top + S(20), right, top + S(42) };
+        PaintText(dc, g_theme.caption, g_theme.textSecondary, logPath, L"EnergyStar.log in the EnergyStar data folder.",
+            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT configLabel{ left, top + S(56), right, top + S(76) };
         PaintText(dc, g_theme.caption, g_theme.textTertiary, configLabel, L"CONFIGURATION", DT_LEFT | DT_TOP | DT_SINGLELINE);
-        RECT configPath{ left, top + S(76), client.right - S(40), top + S(98) };
-        PaintText(dc, g_theme.caption, g_theme.textSecondary, configPath, (directory + L"\\EnergyStar.conf").c_str(),
-            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_PATH_ELLIPSIS);
+        RECT configPath{ left, top + S(76), right, top + S(98) };
+        PaintText(dc, g_theme.caption, g_theme.textSecondary, configPath, L"EnergyStar.conf and the whitelist in the same folder.",
+            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT note{ left, top + S(116), right, top + S(160) };
+        PaintText(dc, g_theme.caption, g_theme.textTertiary, note,
+            L"Installed builds use C:\\ProgramData\\EnergyStar. Portable builds use the application folder.",
+            DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else if (g_page == kPageAbout) {
         const std::wstring text =
             L"EnergyStar keeps background applications efficient without slowing the app you are using.\n\n"
