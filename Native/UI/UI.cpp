@@ -159,7 +159,7 @@ void RemoveSelected(HWND page) {
     RefreshList(page);
 }
 
-INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM, int pageId) {
+INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam, int pageId) {
     switch (message) {
     case WM_INITDIALOG: {
         if (pageId == IDD_POWER) {
