@@ -114,8 +114,6 @@ jobs:
               $isPrerelease = $false
           }
 
-          $prereleaseArg = if ($isPrerelease) { @('--prerelease') } else { @() }
-
           Write-Host "Checking if release $tag exists..."
           $releaseExists = $false
           try {
@@ -125,13 +123,21 @@ jobs:
               $releaseExists = $false
           }
 
-          $files = Get-ChildItem -Path release-assets/*.exe | ForEach-Object { $_.FullName }
+          $files = (Get-ChildItem -Path release-assets/*.exe).FullName
 
           if ($releaseExists) {
               Write-Host "Updating existing release $tag..."
-              gh release edit $tag --title "EnergyStar $tag" --notes-file release-notes.md @prereleaseArg
-              gh release upload $tag @files --clobber
+              if ($isPrerelease) {
+                  gh release edit $tag --title "EnergyStar $tag" --notes-file release-notes.md --prerelease
+              } else {
+                  gh release edit $tag --title "EnergyStar $tag" --notes-file release-notes.md
+              }
+              gh release upload $tag $files --clobber
           } else {
               Write-Host "Creating new release $tag..."
-              gh release create $tag @files --title "EnergyStar $tag" --notes-file release-notes.md @prereleaseArg --target ${{ github.sha }}
+              if ($isPrerelease) {
+                  gh release create $tag --title "EnergyStar $tag" --notes-file release-notes.md --prerelease --target ${{ github.sha }} $files
+              } else {
+                  gh release create $tag --title "EnergyStar $tag" --notes-file release-notes.md --target ${{ github.sha }} $files
+              }
           }
