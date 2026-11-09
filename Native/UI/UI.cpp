@@ -100,8 +100,8 @@ LRESULT CALLBACK WhitelistListProc(HWND list, UINT message, WPARAM wParam, LPARA
         const bool alignRight = (point.x > (winRect.left + winRect.right) / 2);
         const bool alignBottom = (point.y > (winRect.top + winRect.bottom) / 2);
 
-        int menuX = point.x;
-        int menuY = point.y;
+        LONG menuX = point.x;
+        LONG menuY = point.y;
         menuX = std::clamp(menuX, winRect.left + 10, winRect.right - 10);
         menuY = std::clamp(menuY, winRect.top + 30, winRect.bottom - 10);
 
