@@ -3,57 +3,57 @@
 
 1 RT_MANIFEST "UI.manifest"
 
-IDD_POWER DIALOGEX 0, 0, 218, 240
+IDD_POWER DIALOGEX 0, 0, 207, 220
 STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "Power"
 FONT 9, "Segoe UI", 400, 0, 0x0
 BEGIN
-    GROUPBOX        "Power mode", -1, 7, 7, 204, 128
-    CONTROL         "Auto - battery only", IDC_MODE_AUTO, "Button", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 14, 20, 180, 10
-    CONTROL         "Always on", IDC_MODE_ALWAYS, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 14, 56, 180, 10
-    CONTROL         "Off", IDC_MODE_OFF, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 14, 92, 180, 10
-    LTEXT           "Optimize background apps while on battery.", -1, 24, 32, 180, 20
-    LTEXT           "Keep power control active at all times.", -1, 24, 68, 180, 20
-    LTEXT           "Disable power control completely.", -1, 24, 104, 180, 20
-    GROUPBOX        "Status", -1, 7, 144, 204, 42
-    LTEXT           "", IDC_STATUS, 14, 158, 190, 16
+    GROUPBOX        "Power mode", -1, 7, 7, 193, 128
+    CONTROL         "Auto - battery only", IDC_MODE_AUTO, "Button", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 14, 20, 169, 10
+    CONTROL         "Always on", IDC_MODE_ALWAYS, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 14, 56, 169, 10
+    CONTROL         "Off", IDC_MODE_OFF, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 14, 92, 169, 10
+    LTEXT           "Optimize background apps while on battery.", -1, 24, 32, 169, 20
+    LTEXT           "Keep power control active at all times.", -1, 24, 68, 169, 20
+    LTEXT           "Disable power control completely.", -1, 24, 104, 169, 20
+    GROUPBOX        "Status", -1, 7, 144, 193, 42
+    LTEXT           "", IDC_STATUS, 14, 158, 179, 16
 END
 
-IDD_WHITELIST DIALOGEX 0, 0, 218, 240
+IDD_WHITELIST DIALOGEX 0, 0, 207, 220
 STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "Whitelist"
 FONT 9, "Segoe UI", 400, 0, 0x0
 BEGIN
-    GROUPBOX        "Applications that keep full speed", -1, 7, 7, 204, 196
-    CONTROL         "", IDC_LIST, "ListBox", LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, 14, 18, 126, 150, WS_EX_CLIENTEDGE
-    CONTROL         "No applications yet. Use Add to exclude one.", IDC_EMPTY, "Static", SS_CENTER | SS_CENTERIMAGE, 14, 18, 126, 150
-    PUSHBUTTON      "Add...", IDC_ADD, 150, 22, 54, 14
-    PUSHBUTTON      "Remove", IDC_REMOVE, 150, 42, 54, 14
+    GROUPBOX        "Applications that keep full speed", -1, 7, 7, 193, 196
+    CONTROL         "", IDC_LIST, "ListBox", LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, 14, 18, 115, 150, WS_EX_CLIENTEDGE
+    CONTROL         "No applications yet.", IDC_EMPTY, "Static", SS_CENTER | SS_CENTERIMAGE, 14, 18, 115, 150
+    PUSHBUTTON      "Add...", IDC_ADD, 139, 22, 54, 14
+    PUSHBUTTON      "Remove", IDC_REMOVE, 139, 42, 54, 14
 END
 
-IDD_SETTINGS DIALOGEX 0, 0, 218, 240
+IDD_SETTINGS DIALOGEX 0, 0, 207, 220
 STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "Settings"
 FONT 9, "Segoe UI", 400, 0, 0x0
 BEGIN
-    GROUPBOX        "Debug logging", -1, 7, 7, 204, 64
-    CONTROL         "Enable debug log", IDC_LOGGING, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 14, 20, 180, 10
-    LTEXT           "Save detailed logs for troubleshooting.", -1, 24, 34, 180, 20
-    GROUPBOX        "Data", -1, 7, 80, 204, 92
-    LTEXT           "Configuration and logs live in the", -1, 14, 94, 190, 10
-    LTEXT           "application folder.", -1, 14, 106, 190, 10
-    LTEXT           "Installed: C:\\Program Files\\EnergyStar", -1, 14, 124, 190, 10
-    LTEXT           "Portable: the application folder", -1, 14, 138, 190, 10
+    GROUPBOX        "Debug logging", -1, 7, 7, 193, 64
+    CONTROL         "Enable debug log", IDC_LOGGING, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 14, 20, 169, 10
+    LTEXT           "Save detailed logs for troubleshooting.", -1, 24, 34, 169, 20
+    GROUPBOX        "Data", -1, 7, 80, 193, 92
+    LTEXT           "Configuration and logs live in the", -1, 14, 94, 179, 10
+    LTEXT           "application folder.", -1, 14, 106, 179, 10
+    LTEXT           "Installed: C:\\Program Files\\EnergyStar", -1, 14, 124, 179, 10
+    LTEXT           "Portable: the application folder", -1, 14, 138, 179, 10
 END
 
-IDD_ABOUT DIALOGEX 0, 0, 218, 240
+IDD_ABOUT DIALOGEX 0, 0, 207, 220
 STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "About"
 FONT 9, "Segoe UI", 400, 0, 0x0
 BEGIN
-    GROUPBOX        "EnergyStar", -1, 7, 7, 204, 164
-    LTEXT           "EnergyStar keeps background applications efficient without slowing the app you are using.", -1, 14, 20, 190, 36
-    LTEXT           "Version 2.0.0", -1, 14, 62, 190, 10
-    LTEXT           "Service: EnergyStar.Service.exe    Agent: EnergyStar.Agent.exe", -1, 14, 76, 190, 20
-    LTEXT           "Power control uses Windows EcoQoS and idle process priority. Windows may deny access to protected processes; add those applications to the whitelist if they must stay responsive.", -1, 14, 100, 190, 56
+    GROUPBOX        "EnergyStar", -1, 7, 7, 193, 164
+    LTEXT           "EnergyStar keeps background applications efficient without slowing the app you are using.", -1, 14, 20, 179, 36
+    LTEXT           "Version 2.0.0", -1, 14, 62, 179, 10
+    LTEXT           "Service: EnergyStar.Service.exe    Agent: EnergyStar.Agent.exe", -1, 14, 76, 179, 20
+    LTEXT           "Power control uses Windows EcoQoS and idle process priority. Windows may deny access to protected processes; add those applications to the whitelist if they must stay responsive.", -1, 14, 100, 179, 56
 END

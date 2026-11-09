@@ -328,7 +328,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HICON icon = LoadIconW(instance, MAKEINTRESOURCEW(1));
     PROPSHEETHEADERW sheet{};
     sheet.dwSize = sizeof(sheet);
-    sheet.dwFlags = PSH_PROPSHEETPAGE | PSH_USEHICON;
+    sheet.dwFlags = PSH_PROPSHEETPAGE | PSH_USEHICON | PSH_USECALLBACK;
     sheet.hInstance = instance;
     sheet.hIcon = icon;
     sheet.pszCaption = L"EnergyStar";
