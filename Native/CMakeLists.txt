@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 add_compile_options(/MT /O1 /Os /W4 /EHsc /utf-8)
-file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/../Assets/EnergyStar.ico" ICON_FILE)
+set(ICON_FILE "${CMAKE_SOURCE_DIR}/../Assets/EnergyStar.ico")
 configure_file(Assets/EnergyStar.rc.in "${CMAKE_BINARY_DIR}/EnergyStar.rc" @ONLY)
 
 add_executable(EnergyStar.Service WIN32 Service/Service.cpp "${CMAKE_BINARY_DIR}/EnergyStar.rc")

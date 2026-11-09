@@ -31,7 +31,6 @@ std::unordered_map<DWORD, DWORD> g_managed;
 std::unordered_map<DWORD, HANDLE> g_agents;
 std::atomic<DWORD> g_managedCount{};
 std::atomic<bool> g_configChanged{};
-std::unordered_map<DWORD, HANDLE> g_agents;
 std::wstring g_dataDir;
 
 void Log(const wchar_t* text) {
