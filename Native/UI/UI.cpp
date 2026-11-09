@@ -223,20 +223,29 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM, int pa
         SetBkColor(dc, RGB(255, 255, 255));
         return reinterpret_cast<INT_PTR>(g_whiteBrush);
     }
-    case PSN_SETACTIVE: {
-        if (pageId == IDD_POWER) {
-            RefreshStatus();
-            DisplayStatus(page);
-        } else if (pageId == IDD_WHITELIST) {
-            RefreshList(page);
+    case WM_NOTIFY: {
+        auto* header = reinterpret_cast<NMHDR*>(lParam);
+        if (!header) return FALSE;
+        if (header->code == PSN_SETACTIVE) {
+            if (pageId == IDD_POWER) {
+                RefreshStatus();
+                DisplayStatus(page);
+            } else if (pageId == IDD_WHITELIST) {
+                RefreshList(page);
+            }
+            SetWindowLongPtrW(page, DWLP_MSGRESULT, 0);
+            return TRUE;
         }
-        return 0;
-    }
-    case PSN_APPLY: {
-        if (pageId != IDD_POWER) return PSNRET_NOERROR;
-        if (!SaveSettings(page)) return PSNRET_INVALID;
-        DisplayStatus(page);
-        return PSNRET_NOERROR;
+        if (header->code == PSN_APPLY) {
+            LRESULT result = PSNRET_NOERROR;
+            if (pageId == IDD_POWER) {
+                if (!SaveSettings(page)) result = PSNRET_INVALID;
+                else DisplayStatus(page);
+            }
+            SetWindowLongPtrW(page, DWLP_MSGRESULT, result);
+            return TRUE;
+        }
+        return FALSE;
     }
     case WM_DESTROY:
         KillTimer(page, kStatusTimer);
