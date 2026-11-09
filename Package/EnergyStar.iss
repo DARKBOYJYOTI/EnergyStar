@@ -61,11 +61,36 @@ Type: files; Name: "{app}\EnergyStar.Agent.exe"
 Type: files; Name: "{app}\EnergyStar.installed"
 
 [Code]
-procedure CurStepChanged(CurStep: TSetupStep);
+procedure StopEnergyStarServiceAndProcesses();
 var
   ResultCode: Integer;
 begin
+  Exec(ExpandConstant('{cmd}'), '/c net stop EnergyStarService >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/c sc stop EnergyStarService >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/c taskkill /F /IM EnergyStar.exe >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  StopEnergyStarServiceAndProcesses();
+  Result := True;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
   if CurStep = ssInstall then
-    Exec(ExpandConstant('{cmd}'), '/c net stop EnergyStarService >nul 2>&1', '',
-      SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    StopEnergyStarServiceAndProcesses();
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  StopEnergyStarServiceAndProcesses();
+  Result := True;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    StopEnergyStarServiceAndProcesses();
 end;

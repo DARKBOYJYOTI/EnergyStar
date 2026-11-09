@@ -50,14 +50,21 @@ BEGIN
     LTEXT           "Portable: folder beside executable", -1, 14, 160, 159, 18
 END
 
+IDD_HELP DIALOGEX 0, 0, 187, 196
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "Help"
+FONT 9, "Segoe UI", 400, 0, 0x0
+BEGIN
+    GROUPBOX        "User Guide & Documentation", -1, 7, 7, 173, 180
+    CONTROL         "", IDC_HELP_TEXT, "Edit", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP, 14, 20, 159, 160
+END
+
 IDD_ABOUT DIALOGEX 0, 0, 187, 196
 STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "About"
 FONT 9, "Segoe UI", 400, 0, 0x0
 BEGIN
-    GROUPBOX        "EnergyStar", -1, 7, 7, 173, 178
-    LTEXT           "EnergyStar keeps background applications efficient without slowing the app you are using.", -1, 14, 20, 159, 36
-    LTEXT           "Version 2.0.0", -1, 14, 62, 159, 10
-    LTEXT           "Service: EnergyStar Core", -1, 14, 76, 159, 10
-    LTEXT           "Power control uses Windows EcoQoS and idle process priority. Windows may deny access to protected processes; add those applications to the whitelist if they must stay responsive.", -1, 14, 96, 159, 72
+    GROUPBOX        "About EnergyStar", -1, 7, 7, 173, 180
+    CONTROL         "<a href=\"https://github.com/DARKBOYJYOTI/EnergyStar\">DARKBOYJYOTI/EnergyStar</a> | <a href=\"https://github.com/imbushuo/EnergyStar\">Original CLI</a>", IDC_ABOUT_LINKS, "SysLink", WS_TABSTOP, 14, 20, 159, 12
+    CONTROL         "", IDC_ABOUT_TEXT, "Edit", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP, 14, 34, 159, 146
 END
