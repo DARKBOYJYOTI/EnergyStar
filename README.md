@@ -1,48 +1,42 @@
 # EnergyStar
 
-EnergyStar is a Windows utility that uses the Windows EcoQoS API to reduce CPU impact for inactive user applications. It restores the original process priority when an application becomes active.
+EnergyStar is a lightweight Windows power utility. A native Windows service monitors processes; a small per-session helper reports foreground changes. The native UI runs only when opened.
 
-This repository is a community fork of [imbushuo/EnergyStar](https://github.com/imbushuo/EnergyStar), created to maintain and improve the project. Original project and code are by Bingxing Wang. See [LICENSE](LICENSE) for license terms and notices.
+## Components
 
-## Requirements
+- `EnergyStar.Service.exe`: Windows service running as LocalSystem. Windows restarts it after crashes. A manual stop stays stopped.
+- `EnergyStar.Agent.exe`: tiny hidden per-session foreground-event helper. It has no UI and sends only process IDs through a local authenticated pipe.
+- `EnergyStar.exe`: on-demand native Win32 settings UI. It needs no administrator permission after setup.
 
-- Windows 11, build 22000 or later
-- .NET 10 SDK with Windows desktop targeting packs
+Service shutdown restores process priorities and disables EcoQoS for processes managed during that run. Protected Windows processes may still deny access.
+
+## Configuration
+
+Service stores `EnergyStar.conf` and `whitelist.conf` under Windows CommonApplicationData in the `EnergyStar` folder. UI sends validated settings through a local-only pipe; service writes the files and applies changes without restarting.
+
+`EnergyStar.conf` supports `mode=auto`, `mode=always`, `mode=off`, and `log=on/off`. `whitelist.conf` stores one executable path per line. Logging is off by default.
+
+## Install and portable builds
+
+Run matching `EnergyStar-Setup-win-x64.exe` or `EnergyStar-Setup-win-ARM64.exe` as administrator. Setup installs and starts the service, creates shortcuts, and configures service crash recovery. UI and service settings changes need no elevation.
+
+Portable ZIPs contain the three native executables. Installing the service from a portable folder requires administrator permission.
+
+GitHub Actions builds only when manually dispatched. It exports separate setup executables and portable ZIPs for x64 and ARM64.
 
 ## Build locally
 
-Restore and publish the x64 application:
+Use Visual Studio 2022 Build Tools with the C++ workload and Windows 11 SDK. Then run:
 
 ```powershell
-dotnet restore EnergyStar.sln
-dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
+cmake -S Native -B build -A x64
+cmake --build build --config Release
 ```
 
-For ARM64, replace `win-x64` with `win-arm64`. `EnergyStar.Core.exe` owns process monitoring and runs independently; `EnergyStar.exe` controls it through a current-user-only local pipe.
+## Limitations
 
-Run `EnergyStar.exe --debug` to enable timestamped INFO, WARN, and ERROR entries in `EnergyStar.log` beside the core executable. The UI can also toggle logging. Normal runs do not write a log file.
-
-## Modes and controls
-
-- **Auto:** throttle on battery; restore managed apps when AC power connects.
-- **Always on:** force throttling on battery and AC power.
-- **Off:** stop throttling and restore managed process priorities.
-- **Exclusions:** browse for executables that EnergyStar must not throttle.
-- **Theme:** choose system, light, or dark mode.
-- **Startup:** register or remove a highest-available Task Scheduler logon task. Windows asks for administrator approval. The task XML is saved in the system's shared application-data folder. Elevated privileges apply only to accounts that can run elevated.
-
-## GitHub Actions
-
-Open **Actions**, select **Build EnergyStar**, then choose **Run workflow**. Builds do not start on pushes. Successful runs export separate setup executables and portable ZIPs for x64 and ARM64.
-
-GitHub Actions exports separate setup executables and portable ZIPs for x64 and ARM64. Each portable ZIP contains `EnergyStar.exe` and `EnergyStar.Core.exe`. Setup installs both under Program Files and creates Start Menu shortcuts.
-
-## Known limitations
-
-- Windows does not expose a supported API to query whether an application manages its own EcoQoS state; EnergyStar cannot reliably detect that claim.
-- Windows does not expose a supported API to read another app's EcoQoS state. Use Exclusions for apps that manage their own power behavior.
-- Setup is unsigned and requires Windows administrator approval to install under Program Files.
+Windows does not provide a supported API to read another application’s EcoQoS state. Add those apps to the whitelist.
 
 ## License
 
-This project is licensed under the MIT-style terms in [LICENSE](LICENSE). Keep the original copyright and permission notice in copies or substantial portions. The license includes a separate Microsoft employee/vendor/contractor provision; consult the license text for details.
+See [LICENSE](LICENSE). Preserve original copyright and license notices.

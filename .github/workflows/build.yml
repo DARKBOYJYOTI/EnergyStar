@@ -9,79 +9,41 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, ARM64]
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install .NET 10 SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Restore solution
-        run: dotnet restore EnergyStar.sln
-
-      - name: Publish x64 applications
+      - name: Configure and build native applications
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-          if ($LASTEXITCODE -ne 0) { throw "UI x64 publish failed ($LASTEXITCODE)." }
-          dotnet publish EnergyStar.Core/EnergyStar.Core.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-          if ($LASTEXITCODE -ne 0) { throw "Core x64 publish failed ($LASTEXITCODE)." }
+          cmake -S Native -B "build/${{ matrix.arch }}" -A ${{ matrix.arch }}
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
+          cmake --build "build/${{ matrix.arch }}" --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 
-      - name: Publish ARM64 applications
+      - name: Package setup and portable builds
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-          if ($LASTEXITCODE -ne 0) { throw "UI ARM64 publish failed ($LASTEXITCODE)." }
-          dotnet publish EnergyStar.Core/EnergyStar.Core.csproj -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-          if ($LASTEXITCODE -ne 0) { throw "Core ARM64 publish failed ($LASTEXITCODE)." }
-
-      - name: Install Inno Setup
-        run: choco install innosetup --yes --no-progress
-
-      - name: Prepare portable packages and setup executables
-        shell: pwsh
-        run: |
-          $publish = 'EnergyStar.UI/bin/Release/net10.0-windows'
-          $corePublish = 'EnergyStar.Core/bin/Release/net10.0-windows'
+          choco install innosetup --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed.' }
+          $payload = "build/${{ matrix.arch }}/bin"
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
-          foreach ($arch in @('win-x64', 'win-arm64')) {
-            $portable = "dist/portable/$arch"
-            New-Item -ItemType Directory -Force -Path $portable, 'dist/setups' | Out-Null
-            Copy-Item (Join-Path $publish "$arch/publish/EnergyStar.exe") $portable
-            Copy-Item (Join-Path $corePublish "$arch/publish/EnergyStar.Core.exe") $portable
-            Compress-Archive -Path "$portable/*" -DestinationPath "dist/EnergyStar-portable-$arch.zip" -Force
-            & $iscc "/DAppArch=$arch" "/DPayloadDir=$((Resolve-Path $portable).Path)" "/DOutputDir=$((Resolve-Path 'dist/setups').Path)" Package/EnergyStar.iss
-            if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $arch (exit code $LASTEXITCODE)." }
-          }
+          New-Item -ItemType Directory -Force -Path dist/portable, dist/setups | Out-Null
+          Copy-Item Package/Install-Service.cmd, Package/Remove-Service.cmd $payload
+          Compress-Archive -Path "$payload/*" -DestinationPath "dist/EnergyStar-portable-${{ matrix.arch }}.zip" -Force
+          & $iscc "/DAppArch=${{ matrix.arch }}" "/DPayloadDir=$((Resolve-Path $payload).Path)" "/DOutputDir=$((Resolve-Path dist/setups).Path)" Package/EnergyStar.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
 
-      - name: Upload portable x64
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: EnergyStar-portable-win-x64
-          path: dist/EnergyStar-portable-win-x64.zip
+          name: EnergyStar-Setup-${{ matrix.arch }}
+          path: dist/setups/*.exe
           if-no-files-found: error
 
-      - name: Upload portable ARM64
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: EnergyStar-portable-win-arm64
-          path: dist/EnergyStar-portable-win-arm64.zip
-          if-no-files-found: error
-
-      - name: Upload x64 setup executable
-        uses: actions/upload-artifact@v4
-        with:
-          name: EnergyStar-Setup-win-x64
-          path: dist/setups/EnergyStar-Setup-win-x64.exe
-          if-no-files-found: error
-
-      - name: Upload ARM64 setup executable
-        uses: actions/upload-artifact@v4
-        with:
-          name: EnergyStar-Setup-win-arm64
-          path: dist/setups/EnergyStar-Setup-win-arm64.exe
+          name: EnergyStar-portable-${{ matrix.arch }}
+          path: dist/EnergyStar-portable-${{ matrix.arch }}.zip
           if-no-files-found: error
