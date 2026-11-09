@@ -71,25 +71,32 @@ namespace EnergyStar
             {
                 await using var pipe = new NamedPipeServerStream(PipeName, PipeDirection.InOut, 1,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-                await pipe.WaitForConnectionAsync(cancellationToken);
-                using var reader = new StreamReader(pipe);
-                await using var writer = new StreamWriter(pipe) { AutoFlush = true };
-                var line = await reader.ReadLineAsync(cancellationToken);
-                if (string.IsNullOrWhiteSpace(line)) continue;
-
                 try
                 {
-                    var request = JsonSerializer.Deserialize<EngineRequest>(line)
-                        ?? throw new InvalidDataException("Empty engine request.");
-                    if (request.Action == "configure")
-                        EnergyManager.Configure(request.Mode, request.ExcludedExecutables ?? new List<string>(), request.LoggingEnabled);
-                    var response = JsonSerializer.Serialize(EnergyManager.GetStatus());
-                    await writer.WriteLineAsync(response);
+                    await pipe.WaitForConnectionAsync(cancellationToken);
+                    using var reader = new StreamReader(pipe, leaveOpen: true);
+                    await using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
+                    var line = await reader.ReadLineAsync(cancellationToken);
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    try
+                    {
+                        var request = JsonSerializer.Deserialize<EngineRequest>(line)
+                            ?? throw new InvalidDataException("Empty engine request.");
+                        if (request.Action == "configure")
+                            EnergyManager.Configure(request.Mode, request.ExcludedExecutables ?? new List<string>(), request.LoggingEnabled);
+                        var response = JsonSerializer.Serialize(EnergyManager.GetStatus());
+                        await writer.WriteLineAsync(response);
+                    }
+                    catch (Exception ex) when (ex is JsonException or InvalidDataException or ArgumentException)
+                    {
+                        Logger.Error("Rejected invalid engine IPC request.", ex);
+                        await writer.WriteLineAsync("{}");
+                    }
                 }
-                catch (Exception ex) when (ex is JsonException or InvalidDataException or ArgumentException)
+                catch (IOException ex)
                 {
-                    Logger.Error("Rejected invalid engine IPC request.", ex);
-                    await writer.WriteLineAsync("{}");
+                    Logger.Warning($"Engine IPC client disconnected: {ex.Message}");
                 }
             }
         }
@@ -103,7 +110,7 @@ namespace EnergyStar
                 pipe.Connect(250);
                 using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
                 writer.WriteLine(JsonSerializer.Serialize(request));
-                using var reader = new StreamReader(pipe);
+                using var reader = new StreamReader(pipe, leaveOpen: true);
                 var response = reader.ReadLine();
                 status = response is null ? null : JsonSerializer.Deserialize<EnergyStatus>(response);
                 return status is not null;
