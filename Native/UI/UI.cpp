@@ -548,6 +548,8 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
         } else if (pageId == IDD_HELP) {
             SetDlgItemTextW(page, IDC_HELP_TEXT, kHelpText);
         } else if (pageId == IDD_ABOUT) {
+            SetDlgItemTextW(page, IDC_ABOUT_LINKS,
+                L"<a href=\"https://github.com/DARKBOYJYOTI/EnergyStar\">DARKBOYJYOTI/EnergyStar</a> | <a href=\"https://github.com/imbushuo/EnergyStar\">Original CLI</a>");
             SetDlgItemTextW(page, IDC_ABOUT_TEXT, kAboutText);
         }
         return TRUE;
