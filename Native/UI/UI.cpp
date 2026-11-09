@@ -92,10 +92,9 @@ void RefreshStatusOnly() {
     InvalidateRect(g_window, nullptr, FALSE);
 }
 
-void ApplyModeChecks() {
-    SendMessageW(g_auto, BM_SETCHECK, g_mode == PowerMode::Automatic ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(g_always, BM_SETCHECK, g_mode == PowerMode::AlwaysOn ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(g_off, BM_SETCHECK, g_mode == PowerMode::Off ? BST_CHECKED : BST_UNCHECKED, 0);
+void InvalidateModeCards() {
+    for (HWND card : { g_auto, g_always, g_off })
+        if (card) InvalidateRect(card, nullptr, FALSE);
 }
 
 void RefreshList() {
@@ -115,15 +114,15 @@ void LoadSettings() {
     if (!g_serviceOk) {
         g_active = false;
         g_status = L"Service unavailable · run setup as administrator";
-        ApplyModeChecks();
-        SendMessageW(g_toggle, BM_SETCHECK, BST_UNCHECKED, 0);
+        InvalidateModeCards();
+        if (g_toggle) InvalidateRect(g_toggle, nullptr, FALSE);
         return;
     }
     g_mode = message.mode;
     g_logging = message.logging != 0;
     g_active = message.enabled != 0;
-    ApplyModeChecks();
-    SendMessageW(g_toggle, BM_SETCHECK, g_logging ? BST_CHECKED : BST_UNCHECKED, 0);
+    InvalidateModeCards();
+    if (g_toggle) InvalidateRect(g_toggle, nullptr, FALSE);
     g_exclusions.clear();
     for (DWORD i = 0; i < message.exclusionCount && i < kMaxExclusions; ++i)
         g_exclusions.emplace_back(message.exclusions[i]);
@@ -194,7 +193,7 @@ void RemoveSelected() {
 }
 
 HWND AddControl(const wchar_t* klass, const wchar_t* text, DWORD style, int id, HFONT font) {
-    HWND control = CreateWindowExW(0, klass, text, WS_CHILD | style, 0, 0, 0, 0, g_window,
+    HWND control = CreateWindowExW(0, klass, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0, g_window,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
     if (control && font) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     return control;
@@ -393,12 +392,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_nav[3] = AddControl(L"BUTTON", L"About", BS_OWNERDRAW | WS_TABSTOP, kNavAbout, g_theme.semibold);
         for (HWND nav : g_nav) EnableHover(nav);
 
-        g_auto = AddControl(L"BUTTON", L"Auto · battery only", BS_AUTORADIOBUTTON | BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, kModeAuto, g_theme.body);
-        g_always = AddControl(L"BUTTON", L"Always on", BS_AUTORADIOBUTTON | BS_OWNERDRAW | WS_TABSTOP, kModeAlways, g_theme.body);
-        g_off = AddControl(L"BUTTON", L"Off", BS_AUTORADIOBUTTON | BS_OWNERDRAW | WS_TABSTOP, kModeOff, g_theme.body);
+        g_auto = AddControl(L"BUTTON", L"Auto · battery only", BS_OWNERDRAW | WS_TABSTOP, kModeAuto, g_theme.body);
+        g_always = AddControl(L"BUTTON", L"Always on", BS_OWNERDRAW | WS_TABSTOP, kModeAlways, g_theme.body);
+        g_off = AddControl(L"BUTTON", L"Off", BS_OWNERDRAW | WS_TABSTOP, kModeOff, g_theme.body);
         for (HWND card : { g_auto, g_always, g_off }) EnableHover(card);
 
-        g_toggle = AddControl(L"BUTTON", L"Enable debug log", BS_AUTOCHECKBOX | BS_OWNERDRAW | WS_TABSTOP, kToggleLog, g_theme.body);
+        g_toggle = AddControl(L"BUTTON", L"Enable debug log", BS_OWNERDRAW | WS_TABSTOP, kToggleLog, g_theme.body);
         EnableHover(g_toggle);
 
         g_list = AddControl(L"LISTBOX", L"", LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, kList, g_theme.body);
@@ -474,12 +473,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (id == kNavAbout) { Navigate(kPageAbout); return 0; }
         if (id == kModeAuto || id == kModeAlways || id == kModeOff) {
             g_mode = id == kModeAuto ? PowerMode::Automatic : id == kModeAlways ? PowerMode::AlwaysOn : PowerMode::Off;
-            ApplyModeChecks();
+            InvalidateModeCards();
             SaveSettings();
             return 0;
         }
         if (id == kToggleLog) {
-            g_logging = SendMessageW(g_toggle, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            g_logging = !g_logging;
+            InvalidateRect(g_toggle, nullptr, FALSE);
             SaveSettings();
             return 0;
         }
@@ -496,10 +496,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         case kNavWhitelist: DrawNavItem(g_theme, draw, NavWhitelist, g_page == kPageWhitelist); return TRUE;
         case kNavSettings: DrawNavItem(g_theme, draw, NavSettings, g_page == kPageSettings); return TRUE;
         case kNavAbout: DrawNavItem(g_theme, draw, NavAbout, g_page == kPageAbout); return TRUE;
-        case kModeAuto: DrawModeCard(g_theme, draw, L"Auto · battery only", L"Optimize background apps while on battery."); return TRUE;
-        case kModeAlways: DrawModeCard(g_theme, draw, L"Always on", L"Keep power control active at all times."); return TRUE;
-        case kModeOff: DrawModeCard(g_theme, draw, L"Off", L"Disable power control completely."); return TRUE;
-        case kToggleLog: DrawToggleCard(g_theme, draw, L"Enable debug log", L"Save detailed logs for troubleshooting."); return TRUE;
+        case kModeAuto: DrawModeCard(g_theme, draw, g_mode == PowerMode::Automatic, L"Auto · battery only", L"Optimize background apps while on battery."); return TRUE;
+        case kModeAlways: DrawModeCard(g_theme, draw, g_mode == PowerMode::AlwaysOn, L"Always on", L"Keep power control active at all times."); return TRUE;
+        case kModeOff: DrawModeCard(g_theme, draw, g_mode == PowerMode::Off, L"Off", L"Disable power control completely."); return TRUE;
+        case kToggleLog: DrawToggleCard(g_theme, draw, g_logging, L"Enable debug log", L"Save detailed logs for troubleshooting."); return TRUE;
         case kAdd: DrawSecondaryButton(g_theme, draw); return TRUE;
         case kRemove: DrawSecondaryButton(g_theme, draw); return TRUE;
         case kSave: DrawPrimaryButton(g_theme, draw); return TRUE;

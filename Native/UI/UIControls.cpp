@@ -32,10 +32,6 @@ bool Hovered(const DRAWITEMSTRUCT* draw) {
     return GetWindowLongPtrW(draw->hwndItem, GWLP_USERDATA) == kHover;
 }
 
-bool Checked(const DRAWITEMSTRUCT* draw) {
-    return SendMessageW(draw->hwndItem, BM_GETCHECK, 0, 0) == BST_CHECKED;
-}
-
 void DrawLabel(HDC dc, HFONT font, COLORREF color, int left, int top, int width, int height, const wchar_t* text) {
     RECT area{ left, top, left + width, top + height };
     PaintText(dc, font, color, area, text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
@@ -80,8 +76,7 @@ void DrawSecondaryButton(const Theme& theme, const DRAWITEMSTRUCT* draw) {
     PaintText(draw->hDC, theme.semibold, theme.text, rect, label, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-void DrawModeCard(const Theme& theme, const DRAWITEMSTRUCT* draw, const wchar_t* title, const wchar_t* detail) {
-    const bool selected = Checked(draw);
+void DrawModeCard(const Theme& theme, const DRAWITEMSTRUCT* draw, bool selected, const wchar_t* title, const wchar_t* detail) {
     RECT rect = draw->rcItem;
     const int radius = Dpi(theme, 10);
     COLORREF fill = selected ? theme.cardSelected : Hovered(draw) ? theme.cardHover : theme.card;
@@ -121,8 +116,7 @@ void DrawModeCard(const Theme& theme, const DRAWITEMSTRUCT* draw, const wchar_t*
     DrawLabel(draw->hDC, theme.caption, theme.textSecondary, textLeft, rect.top + Dpi(theme, 42), textWidth, Dpi(theme, 20), detail);
 }
 
-void DrawToggleCard(const Theme& theme, const DRAWITEMSTRUCT* draw, const wchar_t* title, const wchar_t* detail) {
-    const bool enabled = Checked(draw);
+void DrawToggleCard(const Theme& theme, const DRAWITEMSTRUCT* draw, bool enabled, const wchar_t* title, const wchar_t* detail) {
     RECT rect = draw->rcItem;
     const int radius = Dpi(theme, 10);
     FillRounded(draw->hDC, rect, radius, Hovered(draw) ? theme.cardHover : theme.card, theme.border);
