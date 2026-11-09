@@ -8,6 +8,7 @@
 #include <sddl.h>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <mutex>
 #include <fstream>
@@ -27,7 +28,9 @@ std::mutex g_lock;
 PipeMessage g_config;
 DWORD g_foregroundPid{};
 std::atomic<DWORD> g_boostPid{};
-std::unordered_map<DWORD, DWORD> g_managed;
+HANDLE g_foregroundEvent{};
+struct ManagedProcess { DWORD priority{}; FILETIME created{}; };
+std::unordered_map<DWORD, ManagedProcess> g_managed;
 std::unordered_map<DWORD, HANDLE> g_agents;
 std::atomic<DWORD> g_managedCount{};
 std::atomic<bool> g_configChanged{};
@@ -41,6 +44,12 @@ void Log(const wchar_t* text) {
 }
 
 std::wstring GetDataDirectory() {
+    wchar_t module[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, module, MAX_PATH)) {
+        std::filesystem::path portable = std::filesystem::path(module).parent_path();
+        if (GetFileAttributesW((portable / L"EnergyStar.installed").c_str()) == INVALID_FILE_ATTRIBUTES)
+            return portable.wstring();
+    }
     PWSTR known = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_CREATE, nullptr, &known))) return {};
     std::wstring path = std::wstring(known) + L"\\EnergyStar";
@@ -62,7 +71,7 @@ bool IsExcluded(DWORD pid) {
             if (_wcsicmp(image, g_config.exclusions[i]) == 0) excluded = true;
         const wchar_t* name = wcsrchr(image, L'\\');
         name = name ? name + 1 : image;
-        static const wchar_t* bypass[] = { L"EnergyStar.exe", L"EnergyStar.Service.exe", L"EnergyStar.Agent.exe", L"explorer.exe", L"dwm.exe", L"taskmgr.exe", L"csrss.exe", L"smss.exe", L"svchost.exe" };
+        static const wchar_t* bypass[] = { L"EnergyStar.exe", L"EnergyStar.Service.exe", L"EnergyStar.Agent.exe", L"explorer.exe", L"dwm.exe", L"taskmgr.exe", L"procmon.exe", L"procmon64.exe", L"msedge.exe", L"WebViewHost.exe", L"ApplicationFrameHost.exe", L"Widgets.exe", L"ShellExperienceHost.exe", L"StartMenuExperienceHost.exe", L"SearchHost.exe", L"sihost.exe", L"fontdrvhost.exe", L"csrss.exe", L"smss.exe", L"svchost.exe", L"WUDFRd.exe" };
         for (auto item : bypass) if (_wcsicmp(name, item) == 0) excluded = true;
     }
     CloseHandle(process);
@@ -74,12 +83,21 @@ void Restore(DWORD pid) {
     if (it == g_managed.end()) return;
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION, FALSE, pid);
     if (process) {
+        FILETIME created{}, exited{}, kernel{}, user{};
+        if (!GetProcessTimes(process, &created, &exited, &kernel, &user) ||
+            CompareFileTime(&created, &it->second.created) != 0) {
+            CloseHandle(process);
+            g_managed.erase(it);
+            g_managedCount = static_cast<DWORD>(g_managed.size());
+            return;
+        }
         PROCESS_POWER_THROTTLING_STATE state{};
         state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
         state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
         state.StateMask = 0;
-        SetProcessInformation(process, ProcessPowerThrottling, &state, sizeof(state));
-        SetPriorityClass(process, it->second);
+        BOOL qosRestored = SetProcessInformation(process, ProcessPowerThrottling, &state, sizeof(state));
+        BOOL priorityRestored = SetPriorityClass(process, it->second.priority);
+        if (qosRestored || priorityRestored) Log(L"Restored process state.");
         CloseHandle(process);
     }
     g_managed.erase(it);
@@ -95,30 +113,77 @@ void Throttle(DWORD pid) {
     if (!process) return;
     DWORD original = GetPriorityClass(process);
     if (!original) { CloseHandle(process); return; }
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) { CloseHandle(process); return; }
     PROCESS_POWER_THROTTLING_STATE state{};
     state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
     state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
     state.StateMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
-    SetProcessInformation(process, ProcessPowerThrottling, &state, sizeof(state));
-    if (SetPriorityClass(process, IDLE_PRIORITY_CLASS)) { g_managed[pid] = original; g_managedCount = static_cast<DWORD>(g_managed.size()); }
+    BOOL qosApplied = SetProcessInformation(process, ProcessPowerThrottling, &state, sizeof(state));
+    BOOL priorityApplied = SetPriorityClass(process, IDLE_PRIORITY_CLASS);
+    if (priorityApplied || qosApplied) {
+        g_managed[pid] = ManagedProcess{ original, created };
+        g_managedCount = static_cast<DWORD>(g_managed.size());
+        Log(L"Throttled background process.");
+    } else {
+        PROCESS_POWER_THROTTLING_STATE restore{};
+        restore.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+        restore.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+        SetProcessInformation(process, ProcessPowerThrottling, &restore, sizeof(restore));
+        if (priorityApplied) SetPriorityClass(process, original);
+    }
     CloseHandle(process);
+}
+
+std::unordered_map<DWORD, std::vector<DWORD>> GetProcessTree() {
+    std::unordered_map<DWORD, std::vector<DWORD>> children;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return children;
+    PROCESSENTRY32W entry{ sizeof(entry) };
+    if (Process32FirstW(snapshot, &entry)) do {
+        children[entry.th32ParentProcessID].push_back(entry.th32ProcessID);
+    } while (Process32NextW(snapshot, &entry));
+    CloseHandle(snapshot);
+    return children;
+}
+
+std::vector<DWORD> GetDescendants(DWORD root, const std::unordered_map<DWORD, std::vector<DWORD>>& children) {
+    std::vector<DWORD> result, pending{ root };
+    for (size_t i = 0; i < pending.size(); ++i) {
+        auto found = children.find(pending[i]);
+        if (found == children.end()) continue;
+        for (DWORD child : found->second) { result.push_back(child); pending.push_back(child); }
+    }
+    return result;
 }
 
 void ScanProcesses() {
     DWORD session = WTSGetActiveConsoleSessionId();
+    DWORD foreground = 0;
+    { std::lock_guard guard(g_lock); foreground = g_foregroundPid; }
+    auto tree = GetProcessTree();
+    auto descendants = GetDescendants(foreground, tree);
+    std::unordered_set<DWORD> foregroundTree(descendants.begin(), descendants.end());
+    foregroundTree.insert(foreground);
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return;
     PROCESSENTRY32W entry{ sizeof(entry) };
     if (Process32FirstW(snapshot, &entry)) do {
         DWORD ownerSession = 0;
-        if (ProcessIdToSessionId(entry.th32ProcessID, &ownerSession) && ownerSession == session)
-            Throttle(entry.th32ProcessID);
+        if (ProcessIdToSessionId(entry.th32ProcessID, &ownerSession) && ownerSession == session) {
+            if (foregroundTree.contains(entry.th32ProcessID)) Restore(entry.th32ProcessID);
+            else Throttle(entry.th32ProcessID);
+        }
     } while (Process32NextW(snapshot, &entry));
     CloseHandle(snapshot);
     for (auto it = g_managed.begin(); it != g_managed.end();) {
-        HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, it->first);
-        if (!process) { it = g_managed.erase(it); continue; }
+        HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, it->first);
+        if (!process) { it = g_managed.erase(it); g_managedCount = static_cast<DWORD>(g_managed.size()); continue; }
+        FILETIME created{}, exited{}, kernel{}, user{};
+        bool sameProcess = GetProcessTimes(process, &created, &exited, &kernel, &user) &&
+            CompareFileTime(&created, &it->second.created) == 0;
         CloseHandle(process);
+        if (!sameProcess) { it = g_managed.erase(it); g_managedCount = static_cast<DWORD>(g_managed.size()); continue; }
         ++it;
     }
 }
@@ -197,8 +262,13 @@ DWORD WINAPI PipeThread(void*) {
                 bool saved = true;
                 if (request.action == PipeAction::Configure) saved = SaveConfig(request);
                 else if (request.action == PipeAction::Foreground) {
-                    { std::lock_guard guard(g_lock); g_foregroundPid = request.foregroundPid; }
-                    g_boostPid = request.foregroundPid;
+                    DWORD processSession = 0;
+                    if (ProcessIdToSessionId(request.foregroundPid, &processSession) && processSession == WTSGetActiveConsoleSessionId()) {
+                        { std::lock_guard guard(g_lock); g_foregroundPid = request.foregroundPid; }
+                        g_boostPid = request.foregroundPid;
+                        SetEvent(g_foregroundEvent);
+                        Log(L"Foreground process changed.");
+                    }
                 }
                 std::lock_guard guard(g_lock);
                 response = g_config;
@@ -264,15 +334,23 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
     g_status.dwCurrentState = SERVICE_START_PENDING;
     SetServiceStatus(g_statusHandle, &g_status);
     g_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    g_foregroundEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_dataDir = GetDataDirectory();
     LoadConfig();
     LaunchAgents();
     HANDLE pipeThread = CreateThread(nullptr, 0, PipeThread, nullptr, 0, nullptr);
     g_status.dwCurrentState = SERVICE_RUNNING; SetServiceStatus(g_statusHandle, &g_status);
-    while (WaitForSingleObject(g_stopEvent, 5000) == WAIT_TIMEOUT) {
+    HANDLE events[] = { g_stopEvent, g_foregroundEvent };
+    DWORD waitResult;
+    do {
+        waitResult = WaitForMultipleObjects(2, events, FALSE, 500);
         LaunchAgents();
         DWORD foreground = g_boostPid.exchange(0);
-        if (foreground) Restore(foreground);
+        if (foreground) {
+            Restore(foreground);
+            auto tree = GetProcessTree();
+            for (DWORD child : GetDescendants(foreground, tree)) Restore(child);
+        }
         SYSTEM_POWER_STATUS power{}; GetSystemPowerStatus(&power);
         PowerMode mode;
         { std::lock_guard guard(g_lock); mode = g_config.mode; }
@@ -284,12 +362,13 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
         }
         if (enabled) ScanProcesses();
         else { std::vector<DWORD> pids; for (auto& item : g_managed) pids.push_back(item.first); for (DWORD pid : pids) Restore(pid); }
-    }
+    } while (waitResult != WAIT_OBJECT_0);
     { std::vector<DWORD> pids; for (auto& item : g_managed) pids.push_back(item.first); for (DWORD pid : pids) Restore(pid); }
     for (auto& item : g_agents) { TerminateProcess(item.second, 0); CloseHandle(item.second); }
     g_agents.clear();
     if (pipeThread) { WaitForSingleObject(pipeThread, 2000); CloseHandle(pipeThread); }
     CloseHandle(g_stopEvent);
+    CloseHandle(g_foregroundEvent);
     g_status.dwCurrentState = SERVICE_STOPPED; SetServiceStatus(g_statusHandle, &g_status);
 }
 

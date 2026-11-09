@@ -15,7 +15,7 @@ add_executable(EnergyStar.Agent WIN32 Agent/Agent.cpp)
 target_link_libraries(EnergyStar.Agent PRIVATE User32)
 
 add_executable(EnergyStar WIN32 UI/UI.cpp "${CMAKE_BINARY_DIR}/EnergyStar.rc")
-target_link_libraries(EnergyStar PRIVATE Comctl32 Comdlg32 Shell32)
+target_link_libraries(EnergyStar PRIVATE Comctl32 Shell32 Ole32)
 
 foreach(target EnergyStar.Service EnergyStar.Agent EnergyStar)
   set_target_properties(${target} PROPERTIES

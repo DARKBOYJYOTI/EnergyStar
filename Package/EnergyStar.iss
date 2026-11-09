@@ -52,3 +52,13 @@ Filename: "{app}\EnergyStar.exe"; Description: "Launch EnergyStar"; Flags: nowai
 
 [UninstallRun]
 Filename: "{app}\EnergyStar.Service.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveEnergyStarService"
+
+[UninstallDelete]
+Type: files; Name: "{app}\EnergyStar.installed"
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    SaveStringToFile(ExpandConstant('{app}\EnergyStar.installed'), '1', False);
+end;

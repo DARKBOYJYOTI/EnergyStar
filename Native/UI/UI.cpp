@@ -1,10 +1,12 @@
 #include <windows.h>
 #include <commctrl.h>
-#include <commdlg.h>
 #include <shlobj.h>
+#include <shobjidl.h>
+#include <uxtheme.h>
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <iterator>
 #include "../Shared/Protocol.h"
 
 #pragma comment(lib, "Comctl32.lib")
@@ -12,9 +14,10 @@
 #pragma comment(lib, "Shell32.lib")
 
 namespace {
-constexpr int kMode = 101, kLog = 102, kList = 103, kAdd = 104, kRemove = 105, kApply = 106, kStatus = 107;
-HWND g_mode{}, g_log{}, g_list{}, g_status{};
+constexpr int kAuto = 101, kAlways = 108, kOff = 109, kLog = 102, kList = 103, kAdd = 104, kRemove = 105, kApply = 106, kStatus = 107;
+HWND g_auto{}, g_always{}, g_off{}, g_log{}, g_list{}, g_status{};
 HFONT g_font{};
+HBRUSH g_background{};
 std::vector<std::wstring> g_exclusions;
 
 bool CallService(PipeMessage& message) {
@@ -46,7 +49,8 @@ void LoadSettings() {
         MessageBoxW(nullptr, L"Service rejected configuration. Check whitelist paths and try again.", L"EnergyStar", MB_ICONERROR | MB_OK);
         return;
     }
-    SendMessageW(g_mode, CB_SETCURSEL, static_cast<WPARAM>(message.mode), 0);
+    SendMessageW(message.mode == PowerMode::Automatic ? g_auto : message.mode == PowerMode::AlwaysOn ? g_always : g_off,
+        BM_SETCHECK, BST_CHECKED, 0);
     SendMessageW(g_log, BM_SETCHECK, message.logging ? BST_CHECKED : BST_UNCHECKED, 0);
     g_exclusions.clear();
     for (DWORD i = 0; i < message.exclusionCount && i < kMaxExclusions; ++i) g_exclusions.emplace_back(message.exclusions[i]);
@@ -57,8 +61,8 @@ void LoadSettings() {
 void SaveSettings() {
     PipeMessage message{};
     message.action = PipeAction::Configure;
-    int selected = static_cast<int>(SendMessageW(g_mode, CB_GETCURSEL, 0, 0));
-    message.mode = selected < 0 ? PowerMode::Automatic : static_cast<PowerMode>(selected);
+    message.mode = SendMessageW(g_always, BM_GETCHECK, 0, 0) == BST_CHECKED ? PowerMode::AlwaysOn :
+        SendMessageW(g_off, BM_GETCHECK, 0, 0) == BST_CHECKED ? PowerMode::Off : PowerMode::Automatic;
     message.logging = SendMessageW(g_log, BM_GETCHECK, 0, 0) == BST_CHECKED;
     message.exclusionCount = static_cast<DWORD>(std::min<size_t>(g_exclusions.size(), kMaxExclusions));
     for (DWORD i = 0; i < message.exclusionCount; ++i) wcscpy_s(message.exclusions[i], g_exclusions[i].c_str());
@@ -74,14 +78,23 @@ void SaveSettings() {
 }
 
 void BrowseApplication() {
-    wchar_t path[MAX_PATH]{};
-    OPENFILENAMEW dialog{ sizeof(dialog) };
-    dialog.lpstrFile = path;
-    dialog.nMaxFile = MAX_PATH;
-    dialog.lpstrFilter = L"Applications (*.exe)\0*.exe\0All files\0*.*\0\0";
-    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    dialog.lpstrTitle = L"Choose an application to exclude";
-    if (!GetOpenFileNameW(&dialog)) return;
+    IFileOpenDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return;
+    COMDLG_FILTERSPEC filters[] = { { L"Applications", L"*.exe" } };
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    dialog->SetFileTypes(1, filters);
+    dialog->SetTitle(L"Choose an application to exclude");
+    if (FAILED(dialog->Show(GetAncestor(g_list, GA_ROOT)))) { dialog->Release(); return; }
+    IShellItem* item = nullptr;
+    if (FAILED(dialog->GetResult(&item))) { dialog->Release(); return; }
+    PWSTR selectedPath = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath))) { item->Release(); dialog->Release(); return; }
+    std::wstring path(selectedPath);
+    CoTaskMemFree(selectedPath);
+    item->Release();
+    dialog->Release();
     if (g_exclusions.size() >= kMaxExclusions) { MessageBoxW(nullptr, L"Whitelist is full.", L"EnergyStar", MB_ICONINFORMATION); return; }
     if (std::find(g_exclusions.begin(), g_exclusions.end(), path) == g_exclusions.end()) g_exclusions.emplace_back(path);
     RefreshList();
@@ -94,22 +107,44 @@ HWND AddControl(HWND parent, const wchar_t* klass, const wchar_t* text, DWORD st
     return control;
 }
 
+void DrawRoundedButton(const DRAWITEMSTRUCT* draw) {
+    const bool primary = draw->CtlID == kApply;
+    const bool pressed = (draw->itemState & ODS_SELECTED) != 0;
+    RECT rect = draw->rcItem;
+    HBRUSH fill = CreateSolidBrush(primary ? (pressed ? RGB(24, 91, 170) : RGB(35, 112, 204)) : RGB(232, 237, 244));
+    HPEN border = CreatePen(PS_SOLID, 1, primary ? RGB(35, 112, 204) : RGB(215, 222, 232));
+    HGDIOBJ oldBrush = SelectObject(draw->hDC, fill);
+    HGDIOBJ oldPen = SelectObject(draw->hDC, border);
+    RoundRect(draw->hDC, rect.left, rect.top, rect.right, rect.bottom, 12, 12);
+    SelectObject(draw->hDC, oldBrush);
+    SelectObject(draw->hDC, oldPen);
+    DeleteObject(fill);
+    DeleteObject(border);
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, primary ? RGB(255, 255, 255) : RGB(31, 41, 55));
+    HGDIOBJ oldFont = SelectObject(draw->hDC, g_font);
+    wchar_t label[128]{};
+    GetWindowTextW(draw->hwndItem, label, static_cast<int>(std::size(label)));
+    DrawTextW(draw->hDC, label, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(draw->hDC, oldFont);
+}
+
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_CREATE) {
+        g_background = CreateSolidBrush(RGB(246, 248, 251));
         g_font = CreateFontW(-17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         AddControl(window, L"STATIC", L"EnergyStar", 0, 0, 28, 22, 250, 36);
-        AddControl(window, L"STATIC", L"Power behavior", 0, 0, 28, 78, 150, 25);
-        g_mode = AddControl(window, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL, kMode, 28, 106, 340, 180);
-        SendMessageW(g_mode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto — battery only"));
-        SendMessageW(g_mode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Always on — force enable"));
-        SendMessageW(g_mode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Off — disable throttling"));
-        g_log = AddControl(window, L"BUTTON", L"Enable debug log", BS_AUTOCHECKBOX, kLog, 28, 152, 260, 28);
-        AddControl(window, L"STATIC", L"Never throttle these applications", 0, 0, 28, 202, 360, 25);
-        g_list = AddControl(window, L"LISTBOX", L"", LBS_NOTIFY | WS_BORDER | WS_VSCROLL, kList, 28, 232, 520, 230);
-        AddControl(window, L"BUTTON", L"Browse…", BS_PUSHBUTTON, kAdd, 28, 478, 120, 34);
-        AddControl(window, L"BUTTON", L"Remove", BS_PUSHBUTTON, kRemove, 160, 478, 120, 34);
-        AddControl(window, L"BUTTON", L"Save settings", BS_DEFPUSHBUTTON, kApply, 390, 478, 158, 34);
+        AddControl(window, L"STATIC", L"POWER MODE", 0, 0, 28, 76, 200, 25);
+        g_auto = AddControl(window, L"BUTTON", L"Auto · battery only", BS_AUTORADIOBUTTON | WS_GROUP, kAuto, 30, 108, 190, 30);
+        g_always = AddControl(window, L"BUTTON", L"Always on", BS_AUTORADIOBUTTON, kAlways, 230, 108, 150, 30);
+        g_off = AddControl(window, L"BUTTON", L"Off", BS_AUTORADIOBUTTON, kOff, 390, 108, 100, 30);
+        g_log = AddControl(window, L"BUTTON", L"Enable debug log", BS_AUTOCHECKBOX, kLog, 28, 158, 260, 28);
+        AddControl(window, L"STATIC", L"WHITELIST", 0, 0, 28, 204, 200, 25);
+        g_list = AddControl(window, L"LISTBOX", L"", LBS_NOTIFY | WS_BORDER | WS_VSCROLL, kList, 28, 234, 520, 230);
+        AddControl(window, L"BUTTON", L"Add application…", BS_OWNERDRAW, kAdd, 28, 478, 160, 38);
+        AddControl(window, L"BUTTON", L"Remove", BS_OWNERDRAW, kRemove, 200, 478, 120, 38);
+        AddControl(window, L"BUTTON", L"Save changes", BS_OWNERDRAW, kApply, 390, 478, 158, 38);
         g_status = AddControl(window, L"STATIC", L"Connecting to service…", 0, kStatus, 28, 532, 520, 28);
         LoadSettings();
         return 0;
@@ -123,15 +158,32 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         }
         case kApply: SaveSettings(); return 0;
+        case kAuto: case kAlways: case kOff: SaveSettings(); return 0;
         }
     }
+    if (message == WM_DRAWITEM && wParam != kList) {
+        DrawRoundedButton(reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
+        return TRUE;
+    }
     if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
-    if (message == WM_DESTROY) { if (g_font) DeleteObject(g_font); PostQuitMessage(0); return 0; }
+    if (message == WM_CTLCOLORSTATIC || message == WM_CTLCOLORBTN) {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        SetBkColor(dc, RGB(246, 248, 251));
+        SetTextColor(dc, RGB(31, 41, 55));
+        return reinterpret_cast<LRESULT>(g_background);
+    }
+    if (message == WM_ERASEBKGND) {
+        RECT area{}; GetClientRect(window, &area);
+        FillRect(reinterpret_cast<HDC>(wParam), &area, g_background);
+        return 1;
+    }
+    if (message == WM_DESTROY) { if (g_font) DeleteObject(g_font); if (g_background) DeleteObject(g_background); PostQuitMessage(0); return 0; }
     return DefWindowProcW(window, message, wParam, lParam);
 }
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     INITCOMMONCONTROLSEX controls{ sizeof(controls), ICC_STANDARD_CLASSES };
     InitCommonControlsEx(&controls);
     WNDCLASSW klass{};
@@ -150,5 +202,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
     DeleteObject(klass.hbrBackground);
+    CoUninitialize();
     return static_cast<int>(message.wParam);
 }

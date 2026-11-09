@@ -12,7 +12,7 @@ Service shutdown restores process priorities and disables EcoQoS for processes m
 
 ## Configuration
 
-Service stores `EnergyStar.conf` and `whitelist.conf` under Windows CommonApplicationData in the `EnergyStar` folder. UI sends validated settings through a local-only pipe; service writes the files and applies changes without restarting.
+Portable builds store `EnergyStar.conf`, `whitelist.conf`, and `EnergyStar.log` beside the executables. Setup installs store them under Windows CommonApplicationData in the `EnergyStar` folder. UI sends validated settings through a local-only pipe; service writes the files and applies changes without restarting.
 
 `EnergyStar.conf` supports `mode=auto`, `mode=always`, `mode=off`, and `log=on/off`. `whitelist.conf` stores one executable path per line. Logging is off by default.
 
