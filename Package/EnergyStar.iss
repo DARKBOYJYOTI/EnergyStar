@@ -39,27 +39,26 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Files]
 Source: "{#PayloadDir}\EnergyStar.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PayloadDir}\EnergyStar.Service.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PayloadDir}\EnergyStar.Agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+Type: files; Name: "{app}\EnergyStar.installed"
 
 [Icons]
 Name: "{autoprograms}\EnergyStar"; Filename: "{app}\EnergyStar.exe"
 Name: "{autodesktop}\EnergyStar"; Filename: "{app}\EnergyStar.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\EnergyStar.Service.exe"; Parameters: "--install"; Flags: runhidden waituntilterminated
+Filename: "{app}\EnergyStar.exe"; Parameters: "--install"; Flags: runhidden waituntilterminated
 Filename: "{app}\EnergyStar.exe"; Description: "Launch EnergyStar"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/c net stop EnergyStarService >nul 2>&1"; Flags: runhidden waituntilterminated
-Filename: "{app}\EnergyStar.Service.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveEnergyStarService"
-Filename: "{cmd}"; Parameters: "/c taskkill /f /im EnergyStar.Agent.exe >nul 2>&1"; Flags: runhidden waituntilterminated
+Filename: "{app}\EnergyStar.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveEnergyStarService"
 
 [UninstallDelete]
+Type: files; Name: "{app}\EnergyStar.Service.exe"
+Type: files; Name: "{app}\EnergyStar.Agent.exe"
 Type: files; Name: "{app}\EnergyStar.installed"
-Type: files; Name: "{app}\EnergyStar.conf"
-Type: files; Name: "{app}\whitelist.conf"
-Type: files; Name: "{app}\EnergyStar.log"
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -67,6 +66,6 @@ var
   ResultCode: Integer;
 begin
   if CurStep = ssInstall then
-    Exec(ExpandConstant('{cmd}'), '/c net stop EnergyStarService >nul 2>&1 & taskkill /f /im EnergyStar.Agent.exe >nul 2>&1', '',
+    Exec(ExpandConstant('{cmd}'), '/c net stop EnergyStarService >nul 2>&1', '',
       SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;

@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <sddl.h>
 #include <string>
 #include "../Shared/Protocol.h"
 
@@ -57,8 +58,16 @@ void CALLBACK ForegroundChanged(HWINEVENTHOOK, DWORD, HWND window, LONG, LONG, D
 }
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\EnergyStar.Agent");
+int RunAgentProcess() {
+    DWORD sessionId = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
+    const std::wstring mutexName = L"Global\\EnergyStar.Agent." + std::to_wstring(sessionId);
+    SECURITY_ATTRIBUTES attributes{ sizeof(attributes), nullptr, FALSE };
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;GA;;;SY)(A;;GA;;;OW)",
+            SDDL_REVISION_1, &descriptor, nullptr)) attributes.lpSecurityDescriptor = descriptor;
+    HANDLE mutex = CreateMutexW(attributes.lpSecurityDescriptor ? &attributes : nullptr, TRUE, mutexName.c_str());
+    if (descriptor) LocalFree(descriptor);
     if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) { if (mutex) CloseHandle(mutex); return 0; }
     HWINEVENTHOOK hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
         ForegroundChanged, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);

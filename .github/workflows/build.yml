@@ -31,8 +31,7 @@ jobs:
           $payload = "build/${{ matrix.arch }}/bin"
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
           New-Item -ItemType Directory -Force -Path dist/portable, dist/setups | Out-Null
-          Copy-Item Package/Install-Service.cmd, Package/Remove-Service.cmd $payload
-          Compress-Archive -Path "$payload/*" -DestinationPath "dist/EnergyStar-portable-${{ matrix.arch }}.zip" -Force
+          Copy-Item "$payload/EnergyStar.exe" "dist/portable/EnergyStar-portable-${{ matrix.arch }}.exe"
           & $iscc "/DAppArch=${{ matrix.arch }}" "/DPayloadDir=$((Resolve-Path $payload).Path)" "/DOutputDir=$((Resolve-Path dist/setups).Path)" Package/EnergyStar.iss
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
 
@@ -45,5 +44,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: EnergyStar-portable-${{ matrix.arch }}
-          path: dist/EnergyStar-portable-${{ matrix.arch }}.zip
+          path: dist/portable/EnergyStar-portable-${{ matrix.arch }}.exe
           if-no-files-found: error

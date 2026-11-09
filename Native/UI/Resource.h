@@ -18,4 +18,6 @@
 
 #define IDC_LOGGING 1020
 
+#define IDM_COPY_PATH 2001
+
 #endif

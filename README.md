@@ -1,28 +1,28 @@
 # EnergyStar
 
-EnergyStar is a lightweight Windows power utility. A native Windows service monitors processes; a small per-session helper reports foreground changes. The native UI runs only when opened.
+EnergyStar is a lightweight Windows power utility. One native executable hosts the UI, Windows service, and per-session foreground helper. The UI runs only when opened.
 
 ## Components
 
-- `EnergyStar.Service.exe`: Windows service running as LocalSystem. Windows restarts it after crashes. A manual stop stays stopped.
-- `EnergyStar.Agent.exe`: tiny hidden per-session foreground-event helper. It has no UI and sends only process IDs through a local authenticated pipe.
-- `EnergyStar.exe`: on-demand native Win32 settings UI. It needs no administrator permission after setup.
+- `EnergyStar.exe --service`: Windows service running as LocalSystem. Signed-in users can start and stop it from Services; a manual stop stays stopped.
+- `EnergyStar.exe --agent`: tiny hidden per-session foreground-event helper. One runs for each active user session. It has no UI and sends only process IDs through a local authenticated pipe.
+- `EnergyStar.exe`: on-demand native Win32 settings UI. It needs no administrator permission after setup and opens one window per user session.
 
 Service shutdown restores process priorities and disables EcoQoS for processes managed during that run. Protected Windows processes may still deny access.
 
 ## Configuration
 
-Portable builds store `EnergyStar.conf`, `whitelist.conf`, and `EnergyStar.log` beside the executables. Setup installs store them under Windows CommonApplicationData in the `EnergyStar` folder. UI sends validated settings through a local-only pipe; service writes the files and applies changes without restarting.
+All builds store `EnergyStar.conf`, `whitelist.conf`, and `EnergyStar.log` beside the executable. Setup installs them under `C:\Program Files\EnergyStar`; portable builds keep them beside the portable executable. UI sends validated settings through a local-only pipe; service writes the files and applies changes without restarting. Uninstall preserves these user settings and logs.
 
 `EnergyStar.conf` supports `mode=auto`, `mode=always`, `mode=off`, and `log=on/off`. `whitelist.conf` stores one executable path per line. Logging is off by default.
 
 ## Install and portable builds
 
-Run matching `EnergyStar-Setup-win-x64.exe` or `EnergyStar-Setup-win-ARM64.exe` as administrator. Setup installs and starts the service, creates shortcuts, and configures service crash recovery. UI and service settings changes need no elevation.
+Run matching `EnergyStar-Setup-win-x64.exe` or `EnergyStar-Setup-win-ARM64.exe` as administrator. Setup installs and starts the service and creates shortcuts. To use a portable executable, run `EnergyStar-portable-x64.exe --install` as administrator once. All signed-in Windows users can use the shared service and settings; any user can stop or start the service in `services.msc`. A manual stop stays stopped until a user starts it or Windows reboots.
 
-Portable ZIPs contain the three native executables. Installing the service from a portable folder requires administrator permission.
+Portable downloads are single `.exe` files. Their settings and logs stay beside that executable.
 
-GitHub Actions builds only when manually dispatched. It exports separate setup executables and portable ZIPs for x64 and ARM64.
+GitHub Actions builds only when manually dispatched. It exports setup and single-file portable executables for x64 and ARM64.
 
 ## Build locally
 

@@ -2,6 +2,8 @@
 #include <commctrl.h>
 #include <prsht.h>
 #include <shobjidl.h>
+#include <windowsx.h>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -25,6 +27,70 @@ PowerMode g_mode = PowerMode::Automatic;
 std::vector<std::wstring> g_exclusions;
 std::wstring g_status = L"Status: Connecting to service…";
 ULONGLONG g_savedUntil{};
+HWND g_whitelistTip{};
+
+void CopyTextToClipboard(HWND owner, const std::wstring& text) {
+    if (!OpenClipboard(owner)) return;
+    EmptyClipboard();
+    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL data = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (data) {
+        void* target = GlobalLock(data);
+        if (target) {
+            memcpy(target, text.c_str(), bytes);
+            GlobalUnlock(data);
+            if (SetClipboardData(CF_UNICODETEXT, data)) data = nullptr;
+        }
+    }
+    if (data) GlobalFree(data);
+    CloseClipboard();
+}
+
+LRESULT CALLBACK WhitelistListProc(HWND list, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    if (message == WM_CONTEXTMENU) {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        int index = -1;
+        if (point.x == -1 && point.y == -1) {
+            index = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0));
+        } else {
+            POINT client = point;
+            ScreenToClient(list, &client);
+            const LRESULT hit = SendMessageW(list, LB_ITEMFROMPOINT, 0, MAKELPARAM(client.x, client.y));
+            if (HIWORD(hit) == 0) index = LOWORD(hit);
+        }
+        if (index < 0 || index >= static_cast<int>(g_exclusions.size())) return 0;
+        SendMessageW(list, LB_SETCURSEL, index, 0);
+        POINT screen{};
+        GetCursorPos(&screen);
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, IDM_COPY_PATH, L"Copy path");
+        SetMenuDefaultItem(menu, IDM_COPY_PATH, FALSE);
+        const int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, list, nullptr);
+        DestroyMenu(menu);
+        if (command == IDM_COPY_PATH) CopyTextToClipboard(GetParent(list), g_exclusions[index]);
+        return 0;
+    }
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(list, WhitelistListProc, 1);
+    return DefSubclassProc(list, message, wParam, lParam);
+}
+
+void SetupWhitelistTooltip(HWND page) {
+    HWND list = GetDlgItem(page, IDC_LIST);
+    if (!list) return;
+    g_whitelistTip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+        page, nullptr, g_instance, nullptr);
+    if (!g_whitelistTip) return;
+    SetWindowPos(g_whitelistTip, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    TOOLINFOW tool{ sizeof(tool) };
+    tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    tool.hwnd = page;
+    tool.uId = reinterpret_cast<UINT_PTR>(list);
+    tool.lpszText = LPSTR_TEXTCALLBACKW;
+    SendMessageW(g_whitelistTip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+    SendMessageW(g_whitelistTip, TTM_SETMAXTIPWIDTH, 0, 600);
+    SetWindowSubclass(list, WhitelistListProc, 1, 0);
+}
 
 bool CallService(PipeMessage& message) {
     HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -49,7 +115,7 @@ void UpdateStatusLine() {
         return;
     }
     if (!g_serviceOk) {
-        g_status = L"Status: Service unavailable - run setup as administrator";
+        g_status = L"Status: Service unavailable - start EnergyStar Core in Services";
         g_active = false;
         return;
     }
@@ -165,15 +231,29 @@ void RemoveSelected(HWND page) {
     RefreshList(page);
 }
 
+void RemoveSheetHelp(HWND sheet) {
+    if (!sheet) return;
+    LONG_PTR style = GetWindowLongPtrW(sheet, GWL_EXSTYLE);
+    if (style & WS_EX_CONTEXTHELP) {
+        SetWindowLongPtrW(sheet, GWL_EXSTYLE, style & ~static_cast<LONG_PTR>(WS_EX_CONTEXTHELP));
+        SetWindowPos(sheet, nullptr, 0, 0, 0, 0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    HMENU menu = GetSystemMenu(sheet, FALSE);
+    if (menu) DeleteMenu(menu, SC_CONTEXTHELP, MF_BYCOMMAND);
+}
+
 INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam, int pageId) {
     switch (message) {
     case WM_INITDIALOG: {
+        RemoveSheetHelp(GetParent(page));
         if (pageId == IDD_POWER) {
             CheckRadioButton(page, IDC_MODE_AUTO, IDC_MODE_OFF, ModeControlId(g_mode));
             DisplayStatus(page);
             SetTimer(page, kStatusTimer, 3000, nullptr);
         } else if (pageId == IDD_WHITELIST) {
             RefreshList(page);
+            SetupWhitelistTooltip(page);
         } else if (pageId == IDD_SETTINGS) {
             CheckDlgButton(page, IDC_LOGGING, g_logging ? BST_CHECKED : BST_UNCHECKED);
         }
@@ -232,6 +312,21 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
     case WM_NOTIFY: {
         auto* header = reinterpret_cast<NMHDR*>(lParam);
         if (!header) return FALSE;
+        if (pageId == IDD_WHITELIST && header->code == TTN_GETDISPINFOW && header->hwndFrom == g_whitelistTip) {
+            auto* info = reinterpret_cast<NMTTDISPINFOW*>(lParam);
+            HWND list = GetDlgItem(page, IDC_LIST);
+            POINT point{};
+            GetCursorPos(&point);
+            ScreenToClient(list, &point);
+            const LRESULT hit = SendMessageW(list, LB_ITEMFROMPOINT, 0, MAKELPARAM(point.x, point.y));
+            const int index = HIWORD(hit) ? -1 : LOWORD(hit);
+            if (index >= 0 && index < static_cast<int>(g_exclusions.size()))
+                info->lpszText = const_cast<LPWSTR>(g_exclusions[index].c_str());
+            else
+                info->lpszText = const_cast<LPWSTR>(L"");
+            SetWindowLongPtrW(page, DWLP_MSGRESULT, 0);
+            return TRUE;
+        }
         if (header->code == PSN_SETACTIVE) {
             if (pageId == IDD_POWER) {
                 RefreshStatus();
@@ -255,6 +350,10 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
     }
     case WM_DESTROY:
         KillTimer(page, kStatusTimer);
+        if (pageId == IDD_WHITELIST && g_whitelistTip) {
+            DestroyWindow(g_whitelistTip);
+            g_whitelistTip = nullptr;
+        }
         return TRUE;
     }
     return FALSE;
@@ -289,11 +388,12 @@ int CALLBACK SheetCallback(HWND sheet, UINT message, LPARAM) {
 }
 }
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
+int RunUiProcess(HINSTANCE instance) {
     g_instance = instance;
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\EnergyStar.UI");
-    if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+    if (!mutex) return 1;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
         for (int attempt = 0; attempt < 20; ++attempt) {
             HWND existing = FindWindowW(L"#32770", L"EnergyStar");
             if (existing) {
