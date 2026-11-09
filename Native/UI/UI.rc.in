@@ -1,0 +1,58 @@
+#include <windows.h>
+#include "Resource.h"
+
+1 RT_MANIFEST "UI.manifest"
+
+IDD_POWER DIALOGEX 0, 0, 280, 244
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "Power"
+FONT 9, "Segoe UI", 400, 0, 0x0
+BEGIN
+    GROUPBOX        "Power mode", -1, 7, 7, 266, 128
+    CONTROL         "Auto - battery only", IDC_MODE_AUTO, "Button", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 14, 20, 120, 10
+    LTEXT           "Optimize background apps while on battery.", -1, 24, 32, 236, 20
+    CONTROL         "Always on", IDC_MODE_ALWAYS, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 14, 56, 120, 10
+    LTEXT           "Keep power control active at all times.", -1, 24, 68, 236, 20
+    CONTROL         "Off", IDC_MODE_OFF, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 14, 92, 120, 10
+    LTEXT           "Disable power control completely.", -1, 24, 104, 236, 20
+    GROUPBOX        "Status", -1, 7, 144, 266, 42
+    LTEXT           "", IDC_STATUS, 14, 158, 250, 16
+END
+
+IDD_WHITELIST DIALOGEX 0, 0, 280, 244
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "Whitelist"
+FONT 9, "Segoe UI", 400, 0, 0x0
+BEGIN
+    GROUPBOX        "Applications that keep full speed", -1, 7, 7, 266, 210
+    CONTROL         "", IDC_LIST, "ListBox", LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, 14, 18, 252, 150, WS_EX_CLIENTEDGE
+    CONTROL         "No applications yet. Use Add application to exclude one.", IDC_EMPTY, "Static", SS_CENTER | SS_CENTERIMAGE, 22, 18, 236, 150
+    PUSHBUTTON      "Add application...", IDC_ADD, 14, 178, 84, 16
+    PUSHBUTTON      "Remove", IDC_REMOVE, 104, 178, 60, 16
+END
+
+IDD_SETTINGS DIALOGEX 0, 0, 280, 244
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "Settings"
+FONT 9, "Segoe UI", 400, 0, 0x0
+BEGIN
+    GROUPBOX        "Debug logging", -1, 7, 7, 266, 64
+    CONTROL         "Enable debug log", IDC_LOGGING, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 14, 20, 200, 10
+    LTEXT           "Save detailed logs for troubleshooting.", -1, 24, 34, 236, 20
+    GROUPBOX        "Data", -1, 7, 80, 266, 84
+    LTEXT           "Configuration and logs live in the EnergyStar data folder.", -1, 14, 94, 250, 18
+    LTEXT           "Installed builds use C:\\ProgramData\\EnergyStar.", -1, 14, 114, 250, 10
+    LTEXT           "Portable builds use the application folder.", -1, 14, 128, 250, 10
+END
+
+IDD_ABOUT DIALOGEX 0, 0, 280, 244
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "About"
+FONT 9, "Segoe UI", 400, 0, 0x0
+BEGIN
+    GROUPBOX        "EnergyStar", -1, 7, 7, 266, 150
+    LTEXT           "EnergyStar keeps background applications efficient without slowing the app you are using.", -1, 14, 20, 250, 30
+    LTEXT           "Version 2.0.0", -1, 14, 58, 250, 10
+    LTEXT           "Service: EnergyStar.Service.exe    Agent: EnergyStar.Agent.exe", -1, 14, 72, 250, 10
+    LTEXT           "Power control uses Windows EcoQoS and idle process priority. Windows may deny access to protected processes; add those applications to the whitelist if they must stay responsive.", -1, 14, 94, 250, 40
+END
