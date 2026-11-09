@@ -27,7 +27,13 @@ std::wstring g_status = L"Status: Connecting to service…";
 ULONGLONG g_savedUntil{};
 
 bool CallService(PipeMessage& message) {
-    HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (pipe != INVALID_HANDLE_VALUE) break;
+        if (GetLastError() != ERROR_PIPE_BUSY) return false;
+        WaitNamedPipeW(kPipeName, 500);
+    }
     if (pipe == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0, read = 0;
     DWORD requestSize = message.action == PipeAction::Configure ? sizeof(message) : kHeaderSize;
@@ -269,10 +275,38 @@ INT_PTR CALLBACK SettingsPageProc(HWND page, UINT message, WPARAM wParam, LPARAM
 INT_PTR CALLBACK AboutPageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam) {
     return PageProc(page, message, wParam, lParam, IDD_ABOUT);
 }
+
+int CALLBACK SheetCallback(HWND sheet, UINT message, LPARAM) {
+    if (message == PSCB_INITIALIZED) {
+        LONG_PTR style = GetWindowLongPtrW(sheet, GWL_EXSTYLE);
+        SetWindowLongPtrW(sheet, GWL_EXSTYLE, style & ~static_cast<LONG_PTR>(WS_EX_CONTEXTHELP));
+        HMENU menu = GetSystemMenu(sheet, FALSE);
+        if (menu) DeleteMenu(menu, SC_CONTEXTHELP, MF_BYCOMMAND);
+        SetWindowPos(sheet, nullptr, 0, 0, 0, 0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    return 0;
+}
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     g_instance = instance;
+
+    HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\EnergyStar.UI");
+    if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            HWND existing = FindWindowW(L"#32770", L"EnergyStar");
+            if (existing) {
+                ShowWindow(existing, SW_RESTORE);
+                SetForegroundWindow(existing);
+                break;
+            }
+            Sleep(50);
+        }
+        CloseHandle(mutex);
+        return 0;
+    }
+
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     INITCOMMONCONTROLSEX controls{ sizeof(controls), ICC_WIN95_CLASSES };
     InitCommonControlsEx(&controls);
@@ -294,18 +328,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HICON icon = LoadIconW(instance, MAKEINTRESOURCEW(1));
     PROPSHEETHEADERW sheet{};
     sheet.dwSize = sizeof(sheet);
-    sheet.dwFlags = PSH_PROPSHEETPAGE | PSH_PROPTITLE | PSH_USEHICON;
+    sheet.dwFlags = PSH_PROPSHEETPAGE | PSH_USEHICON;
     sheet.hInstance = instance;
     sheet.hIcon = icon;
     sheet.pszCaption = L"EnergyStar";
     sheet.nPages = 4;
     sheet.nStartPage = 0;
     sheet.ppsp = pages;
+    sheet.pfnCallback = SheetCallback;
 
     const INT_PTR result = PropertySheetW(&sheet);
 
     if (icon) DestroyIcon(icon);
     if (g_whiteBrush) DeleteObject(g_whiteBrush);
+    if (mutex) CloseHandle(mutex);
     CoUninitialize();
     return result < 0 ? 1 : 0;
 }

@@ -26,8 +26,6 @@ SERVICE_STATUS g_status{};
 HANDLE g_stopEvent{};
 std::mutex g_lock;
 PipeMessage g_config;
-DWORD g_foregroundPid{};
-std::atomic<DWORD> g_boostPid{};
 HANDLE g_foregroundEvent{};
 struct ManagedProcess { DWORD priority{}; FILETIME created{}; };
 std::unordered_map<DWORD, ManagedProcess> g_managed;
@@ -35,6 +33,7 @@ std::unordered_map<DWORD, HANDLE> g_agents;
 std::atomic<DWORD> g_managedCount{};
 std::atomic<bool> g_configChanged{};
 std::wstring g_dataDir;
+std::unordered_map<DWORD, DWORD> g_foregroundPids;
 
 void Log(const wchar_t* text) {
     std::lock_guard guard(g_lock);
@@ -45,17 +44,26 @@ void Log(const wchar_t* text) {
 
 std::wstring GetDataDirectory() {
     wchar_t module[MAX_PATH]{};
-    if (GetModuleFileNameW(nullptr, module, MAX_PATH)) {
-        std::filesystem::path portable = std::filesystem::path(module).parent_path();
-        if (GetFileAttributesW((portable / L"EnergyStar.installed").c_str()) == INVALID_FILE_ATTRIBUTES)
-            return portable.wstring();
-    }
+    if (!GetModuleFileNameW(nullptr, module, MAX_PATH)) return {};
+    std::filesystem::path directory = std::filesystem::path(module).parent_path();
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    return directory.wstring();
+}
+
+void MigrateLegacySettings() {
+    std::error_code error;
+    if (std::filesystem::exists(std::filesystem::path(g_dataDir) / L"EnergyStar.conf", error)) return;
     PWSTR known = nullptr;
-    if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_CREATE, nullptr, &known))) return {};
-    std::wstring path = std::wstring(known) + L"\\EnergyStar";
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &known))) return;
+    const std::filesystem::path legacy = std::filesystem::path(known) / L"EnergyStar";
     CoTaskMemFree(known);
-    std::filesystem::create_directories(path);
-    return path;
+    for (const wchar_t* name : { L"EnergyStar.conf", L"whitelist.conf" }) {
+        const std::filesystem::path source = legacy / name;
+        if (std::filesystem::exists(source, error))
+            std::filesystem::copy_file(source, std::filesystem::path(g_dataDir) / name,
+                std::filesystem::copy_options::skip_existing, error);
+    }
 }
 
 bool IsExcluded(DWORD pid) {
@@ -105,9 +113,7 @@ void Restore(DWORD pid) {
 }
 
 void Throttle(DWORD pid) {
-    DWORD foreground = 0;
-    { std::lock_guard guard(g_lock); foreground = g_foregroundPid; }
-    if (!pid || pid == foreground || IsExcluded(pid)) return;
+    if (!pid || IsExcluded(pid)) return;
     if (g_managed.contains(pid)) return;
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION, FALSE, pid);
     if (!process) return;
@@ -157,21 +163,48 @@ std::vector<DWORD> GetDescendants(DWORD root, const std::unordered_map<DWORD, st
     return result;
 }
 
+std::unordered_set<DWORD> GetActiveSessions() {
+    std::unordered_set<DWORD> active;
+    PWTS_SESSION_INFOW sessions = nullptr;
+    DWORD count = 0;
+    if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &sessions, &count)) return active;
+    for (DWORD i = 0; i < count; ++i)
+        if (sessions[i].State == WTSActive) active.insert(sessions[i].SessionId);
+    WTSFreeMemory(sessions);
+    return active;
+}
+
+bool IsSessionActive(DWORD sessionId) {
+    WTS_CONNECTSTATE_CLASS* state = nullptr;
+    DWORD bytes = 0;
+    const bool ok = WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, sessionId,
+        WTSConnectState, reinterpret_cast<LPWSTR*>(&state), &bytes);
+    const bool active = ok && state && *state == WTSActive;
+    if (ok && state) WTSFreeMemory(state);
+    return active;
+}
+
 void ScanProcesses() {
-    DWORD session = WTSGetActiveConsoleSessionId();
-    DWORD foreground = 0;
-    { std::lock_guard guard(g_lock); foreground = g_foregroundPid; }
+    const auto activeSessions = GetActiveSessions();
+    if (activeSessions.empty()) return;
     auto tree = GetProcessTree();
-    auto descendants = GetDescendants(foreground, tree);
-    std::unordered_set<DWORD> foregroundTree(descendants.begin(), descendants.end());
-    foregroundTree.insert(foreground);
+    std::unordered_map<DWORD, DWORD> foreground;
+    { std::lock_guard guard(g_lock); foreground = g_foregroundPids; }
+    std::unordered_map<DWORD, std::unordered_set<DWORD>> foregroundTrees;
+    for (const auto& [session, pid] : foreground) {
+        if (!pid || !activeSessions.contains(session)) continue;
+        auto& foregroundTree = foregroundTrees[session];
+        foregroundTree.insert(pid);
+        for (DWORD child : GetDescendants(pid, tree)) foregroundTree.insert(child);
+    }
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return;
     PROCESSENTRY32W entry{ sizeof(entry) };
     if (Process32FirstW(snapshot, &entry)) do {
         DWORD ownerSession = 0;
-        if (ProcessIdToSessionId(entry.th32ProcessID, &ownerSession) && ownerSession == session) {
-            if (foregroundTree.contains(entry.th32ProcessID)) Restore(entry.th32ProcessID);
+        if (ProcessIdToSessionId(entry.th32ProcessID, &ownerSession) && activeSessions.contains(ownerSession)) {
+            const auto found = foregroundTrees.find(ownerSession);
+            if (found != foregroundTrees.end() && found->second.contains(entry.th32ProcessID)) Restore(entry.th32ProcessID);
             else Throttle(entry.th32ProcessID);
         }
     } while (Process32NextW(snapshot, &entry));
@@ -263,9 +296,8 @@ DWORD WINAPI PipeThread(void*) {
                 if (request.action == PipeAction::Configure) saved = SaveConfig(request);
                 else if (request.action == PipeAction::Foreground) {
                     DWORD processSession = 0;
-                    if (ProcessIdToSessionId(request.foregroundPid, &processSession) && processSession == WTSGetActiveConsoleSessionId()) {
-                        { std::lock_guard guard(g_lock); g_foregroundPid = request.foregroundPid; }
-                        g_boostPid = request.foregroundPid;
+                    if (ProcessIdToSessionId(request.foregroundPid, &processSession) && IsSessionActive(processSession)) {
+                        { std::lock_guard guard(g_lock); g_foregroundPids[processSession] = request.foregroundPid; }
                         SetEvent(g_foregroundEvent);
                         Log(L"Foreground process changed.");
                     }
@@ -290,20 +322,35 @@ DWORD WINAPI PipeThread(void*) {
     return 0;
 }
 
+bool AgentRunning(DWORD sessionId) {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W entry{ sizeof(entry) };
+    bool running = false;
+    if (Process32FirstW(snapshot, &entry)) do {
+        if (_wcsicmp(entry.szExeFile, L"EnergyStar.Agent.exe") == 0) {
+            DWORD processSession = 0;
+            if (ProcessIdToSessionId(entry.th32ProcessID, &processSession) && processSession == sessionId) {
+                running = true;
+                break;
+            }
+        }
+    } while (Process32NextW(snapshot, &entry));
+    CloseHandle(snapshot);
+    return running;
+}
+
 void LaunchAgents() {
-    DWORD count = 0;
-    PWTS_SESSION_INFOW sessions = nullptr;
-    if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &sessions, &count)) return;
-    for (DWORD i = 0; i < count; ++i) {
-        if (sessions[i].State != WTSActive) continue;
-        std::wstring mutexName = L"Global\\EnergyStar.Agent." + std::to_wstring(sessions[i].SessionId);
-        HANDLE agentMutex = OpenMutexW(SYNCHRONIZE, FALSE, mutexName.c_str());
-        if (agentMutex) { CloseHandle(agentMutex); continue; }
-        auto old = g_agents.find(sessions[i].SessionId);
-        if (old != g_agents.end() && WaitForSingleObject(old->second, 0) == WAIT_TIMEOUT) continue;
-        if (old != g_agents.end()) { CloseHandle(old->second); g_agents.erase(old); }
+    for (DWORD sessionId : GetActiveSessions()) {
+        if (AgentRunning(sessionId)) continue;
+        auto old = g_agents.find(sessionId);
+        if (old != g_agents.end()) {
+            if (WaitForSingleObject(old->second, 0) == WAIT_TIMEOUT) continue;
+            CloseHandle(old->second);
+            g_agents.erase(old);
+        }
         HANDLE token = nullptr, primary = nullptr;
-        if (!WTSQueryUserToken(sessions[i].SessionId, &token)) continue;
+        if (!WTSQueryUserToken(sessionId, &token)) continue;
         if (DuplicateTokenEx(token, MAXIMUM_ALLOWED, nullptr, SecurityImpersonation, TokenPrimary, &primary)) {
             wchar_t module[MAX_PATH]{}; GetModuleFileNameW(nullptr, module, MAX_PATH);
             std::wstring agent(module); auto slash = agent.find_last_of(L"\\/"); agent.resize(slash + 1); agent += L"EnergyStar.Agent.exe";
@@ -311,14 +358,13 @@ void LaunchAgents() {
             LPVOID environment = nullptr;
             CreateEnvironmentBlock(&environment, primary, FALSE);
             if (CreateProcessAsUserW(primary, agent.c_str(), nullptr, nullptr, nullptr, FALSE, CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, environment, nullptr, &startup, &process)) {
-                CloseHandle(process.hThread); g_agents[sessions[i].SessionId] = process.hProcess;
+                CloseHandle(process.hThread); g_agents[sessionId] = process.hProcess;
             }
             if (environment) DestroyEnvironmentBlock(environment);
             CloseHandle(primary);
         }
         CloseHandle(token);
     }
-    WTSFreeMemory(sessions);
 }
 
 void WINAPI ServiceControl(DWORD control) {
@@ -336,6 +382,7 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
     g_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_foregroundEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_dataDir = GetDataDirectory();
+    MigrateLegacySettings();
     LoadConfig();
     LaunchAgents();
     HANDLE pipeThread = CreateThread(nullptr, 0, PipeThread, nullptr, 0, nullptr);
@@ -345,12 +392,6 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
     do {
         waitResult = WaitForMultipleObjects(2, events, FALSE, 500);
         LaunchAgents();
-        DWORD foreground = g_boostPid.exchange(0);
-        if (foreground) {
-            Restore(foreground);
-            auto tree = GetProcessTree();
-            for (DWORD child : GetDescendants(foreground, tree)) Restore(child);
-        }
         SYSTEM_POWER_STATUS power{}; GetSystemPowerStatus(&power);
         PowerMode mode;
         { std::lock_guard guard(g_lock); mode = g_config.mode; }
@@ -372,48 +413,96 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
     g_status.dwCurrentState = SERVICE_STOPPED; SetServiceStatus(g_statusHandle, &g_status);
 }
 
+void ClearFailureActions(SC_HANDLE service) {
+    SC_ACTION action[1] = { { SC_ACTION_NONE, 0 } };
+    SERVICE_FAILURE_ACTIONSW failure{ 0, nullptr, nullptr, 1, action };
+    ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS, &failure);
+    SERVICE_FAILURE_ACTIONS_FLAG flag{ FALSE };
+    ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, &flag);
+}
+
+bool SetServicePermissions(SC_HANDLE service) {
+    constexpr wchar_t kSddl[] = L"D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPDTLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)";
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(kSddl, SDDL_REVISION_1, &descriptor, nullptr)) return false;
+    const bool ok = SetServiceObjectSecurity(service, DACL_SECURITY_INFORMATION, descriptor) != FALSE;
+    LocalFree(descriptor);
+    return ok;
+}
+
+bool StopServiceHandle(SC_HANDLE service, DWORD timeoutMs) {
+    SERVICE_STATUS status{};
+    if (!ControlService(service, SERVICE_CONTROL_STOP, &status)) {
+        const DWORD error = GetLastError();
+        if (error != ERROR_SERVICE_NOT_ACTIVE && error != ERROR_SERVICE_CANNOT_ACCEPT_CTRL) return false;
+    }
+    for (DWORD waited = 0; waited < timeoutMs; waited += 250) {
+        if (!QueryServiceStatus(service, &status)) return false;
+        if (status.dwCurrentState == SERVICE_STOPPED) return true;
+        Sleep(250);
+    }
+    return false;
+}
+
 bool InstallService() {
     wchar_t path[MAX_PATH]{}; GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::wstring binaryPath = L"\"" + std::wstring(path) + L"\"";
-    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE | SC_MANAGER_CONNECT);
     if (!scm) return false;
     SC_HANDLE service = CreateServiceW(scm, L"EnergyStarService", L"EnergyStar Core", SERVICE_ALL_ACCESS,
         SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, binaryPath.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr);
     if (!service && GetLastError() == ERROR_SERVICE_EXISTS) service = OpenServiceW(scm, L"EnergyStarService", SERVICE_ALL_ACCESS);
     bool ok = service != nullptr;
     if (ok) {
-        SC_ACTION actions[3] = { { SC_ACTION_RESTART, 5000 }, { SC_ACTION_RESTART, 15000 }, { SC_ACTION_RESTART, 60000 } };
-        SERVICE_FAILURE_ACTIONSW failure{ 86400, nullptr, nullptr, 3, actions };
-        ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS, &failure);
-        SERVICE_FAILURE_ACTIONS_FLAG flag{ TRUE };
-        ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, &flag);
-        StartServiceW(service, 0, nullptr);
-        CloseServiceHandle(service);
-    }
-    CloseServiceHandle(scm); return ok;
-}
-
-void RemoveService() {
-    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ALL_ACCESS);
-    if (!scm) return;
-    SC_HANDLE service = OpenServiceW(scm, L"EnergyStarService", SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
-    if (service) {
-        SERVICE_STATUS status{};
-        ControlService(service, SERVICE_CONTROL_STOP, &status);
-        for (int attempt = 0; attempt < 50; ++attempt) {
-            if (!QueryServiceStatus(service, &status) || status.dwCurrentState == SERVICE_STOPPED) break;
-            Sleep(200);
-        }
-        DeleteService(service);
+        ChangeServiceConfigW(service, SERVICE_NO_CHANGE, SERVICE_AUTO_START, SERVICE_NO_CHANGE,
+            binaryPath.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        ClearFailureActions(service);
+        SetServicePermissions(service);
+        SERVICE_DESCRIPTIONW description{ const_cast<LPWSTR>(L"Keeps background applications efficient without slowing the active application.") };
+        ChangeServiceConfig2W(service, SERVICE_CONFIG_DESCRIPTION, &description);
+        ok = StopServiceHandle(service, 30000);
+        if (ok) ok = StartServiceW(service, 0, nullptr) != FALSE || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING;
         CloseServiceHandle(service);
     }
     CloseServiceHandle(scm);
+    return ok;
+}
+
+bool RemoveService() {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ALL_ACCESS);
+    if (!scm) return false;
+    SC_HANDLE service = OpenServiceW(scm, L"EnergyStarService",
+        SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS | SERVICE_CHANGE_CONFIG);
+    if (!service) {
+        const bool missing = GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST;
+        CloseServiceHandle(scm);
+        return missing;
+    }
+    ClearFailureActions(service);
+    StopServiceHandle(service, 30000);
+    SERVICE_STATUS_PROCESS status{};
+    DWORD bytes = 0;
+    if (QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&status), sizeof(status), &bytes) &&
+        status.dwCurrentState != SERVICE_STOPPED) {
+        HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, status.dwProcessId);
+        if (process) {
+            TerminateProcess(process, 0);
+            WaitForSingleObject(process, 5000);
+            CloseHandle(process);
+        }
+        Sleep(500);
+    }
+    bool deleted = DeleteService(service) != FALSE;
+    if (!deleted && GetLastError() == ERROR_SERVICE_MARKED_FOR_DELETE) deleted = true;
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    return deleted;
 }
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
     if (commandLine && _wcsicmp(commandLine, L"--install") == 0) return InstallService() ? 0 : 1;
-    if (commandLine && _wcsicmp(commandLine, L"--uninstall") == 0) { RemoveService(); return 0; }
+    if (commandLine && _wcsicmp(commandLine, L"--uninstall") == 0) return RemoveService() ? 0 : 1;
     SERVICE_TABLE_ENTRYW table[] = { { const_cast<LPWSTR>(L"EnergyStarService"), ServiceMain }, { nullptr, nullptr } };
     return StartServiceCtrlDispatcherW(table) ? 0 : 1;
 }

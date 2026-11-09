@@ -51,14 +51,21 @@ Filename: "{app}\EnergyStar.Service.exe"; Parameters: "--install"; Flags: runhid
 Filename: "{app}\EnergyStar.exe"; Description: "Launch EnergyStar"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
+Filename: "{cmd}"; Parameters: "/c net stop EnergyStarService >nul 2>&1"; Flags: runhidden waituntilterminated
 Filename: "{app}\EnergyStar.Service.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveEnergyStarService"
 
 [UninstallDelete]
 Type: files; Name: "{app}\EnergyStar.installed"
+Type: files; Name: "{app}\EnergyStar.conf"
+Type: files; Name: "{app}\whitelist.conf"
+Type: files; Name: "{app}\EnergyStar.log"
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
 begin
-  if CurStep = ssPostInstall then
-    SaveStringToFile(ExpandConstant('{app}\EnergyStar.installed'), '1', False);
+  if CurStep = ssInstall then
+    Exec(ExpandConstant('{cmd}'), '/c net stop EnergyStarService >nul 2>&1', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;

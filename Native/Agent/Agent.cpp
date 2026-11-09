@@ -58,10 +58,7 @@ void CALLBACK ForegroundChanged(HWINEVENTHOOK, DWORD, HWND window, LONG, LONG, D
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    DWORD sessionId = 0;
-    ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
-    std::wstring mutexName = L"Global\\EnergyStar.Agent." + std::to_wstring(sessionId);
-    HANDLE mutex = CreateMutexW(nullptr, TRUE, mutexName.c_str());
+    HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\EnergyStar.Agent");
     if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) { if (mutex) CloseHandle(mutex); return 0; }
     HWINEVENTHOOK hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
         ForegroundChanged, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
