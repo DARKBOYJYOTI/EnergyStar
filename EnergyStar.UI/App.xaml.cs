@@ -86,8 +86,8 @@ namespace EnergyStar.UI
                 : new[] { "#F4F6FA", "#FFFFFF", "#F8F9FC", "#172033", "#697386", "#326CE5", "#E8EFFF", "#E7EAF0", "#178A56", "#B96B12" };
             var keys = new[] { "AppBackground", "Surface", "Sidebar", "TextPrimary", "TextSecondary", "Accent", "AccentSoft", "BorderBrush", "Success", "Warning" };
             for (var i = 0; i < keys.Length; i++)
-                ((System.Windows.Media.SolidColorBrush)Resources[keys[i]]).Color =
-                    (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(colors[i]);
+                Resources[keys[i]] = new System.Windows.Media.SolidColorBrush(
+                    (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(colors[i]));
         }
 
         private void CreateTrayIcon()
