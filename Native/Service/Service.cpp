@@ -226,6 +226,9 @@ void LaunchAgents() {
     if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &sessions, &count)) return;
     for (DWORD i = 0; i < count; ++i) {
         if (sessions[i].State != WTSActive) continue;
+        std::wstring mutexName = L"Global\\EnergyStar.Agent." + std::to_wstring(sessions[i].SessionId);
+        HANDLE agentMutex = OpenMutexW(SYNCHRONIZE, FALSE, mutexName.c_str());
+        if (agentMutex) { CloseHandle(agentMutex); continue; }
         auto old = g_agents.find(sessions[i].SessionId);
         if (old != g_agents.end() && WaitForSingleObject(old->second, 0) == WAIT_TIMEOUT) continue;
         if (old != g_agents.end()) { CloseHandle(old->second); g_agents.erase(old); }
