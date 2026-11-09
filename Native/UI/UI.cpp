@@ -291,14 +291,54 @@ int ModeControlId(PowerMode mode) {
 
 void DisplayStatus(HWND page) {
     SetDlgItemTextW(page, IDC_STATUS, g_status.c_str());
+    ServiceState state = QueryEnergyStarServiceState();
+    const bool serviceRunning = (state == ServiceState::Running);
+    HWND autoRadio = GetDlgItem(page, IDC_MODE_AUTO);
+    HWND alwaysRadio = GetDlgItem(page, IDC_MODE_ALWAYS);
+    HWND offRadio = GetDlgItem(page, IDC_MODE_OFF);
+    HWND actionBtn = GetDlgItem(page, IDC_POWER_ACTION);
+
+    if (autoRadio) EnableWindow(autoRadio, serviceRunning);
+    if (alwaysRadio) EnableWindow(alwaysRadio, serviceRunning);
+    if (offRadio) EnableWindow(offRadio, serviceRunning);
+
+    if (actionBtn) {
+        if (state == ServiceState::NotInstalled) {
+            SetWindowTextW(actionBtn, L"Install Service");
+            ShowWindow(actionBtn, SW_SHOW);
+            EnableWindow(actionBtn, TRUE);
+        } else if (state == ServiceState::Stopped) {
+            SetWindowTextW(actionBtn, L"Start Service");
+            ShowWindow(actionBtn, SW_SHOW);
+            EnableWindow(actionBtn, TRUE);
+        } else if (state == ServiceState::Running) {
+            ShowWindow(actionBtn, SW_HIDE);
+        } else {
+            SetWindowTextW(actionBtn, L"Please wait...");
+            ShowWindow(actionBtn, SW_SHOW);
+            EnableWindow(actionBtn, FALSE);
+        }
+    }
 }
 
 void RefreshList(HWND page) {
     HWND list = GetDlgItem(page, IDC_LIST);
     if (!list) return;
     SendMessageW(list, LB_RESETCONTENT, 0, 0);
-    for (const auto& path : g_exclusions)
+    HDC dc = GetDC(list);
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(list, WM_GETFONT, 0, 0));
+    HFONT oldFont = font ? reinterpret_cast<HFONT>(SelectObject(dc, font)) : nullptr;
+    LONG maxExtent = 0;
+    for (const auto& path : g_exclusions) {
         SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(path.c_str()));
+        SIZE sz{};
+        if (GetTextExtentPoint32W(dc, path.c_str(), static_cast<int>(path.length()), &sz)) {
+            if (sz.cx > maxExtent) maxExtent = sz.cx;
+        }
+    }
+    if (oldFont) SelectObject(dc, oldFont);
+    ReleaseDC(list, dc);
+    SendMessageW(list, LB_SETHORIZONTALEXTENT, maxExtent + 24, 0);
     const bool empty = g_exclusions.empty();
     ShowWindow(list, empty ? SW_HIDE : SW_SHOW);
     ShowWindow(GetDlgItem(page, IDC_EMPTY), empty ? SW_SHOW : SW_HIDE);
@@ -359,6 +399,34 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
             CheckRadioButton(page, IDC_MODE_AUTO, IDC_MODE_OFF, ModeControlId(g_mode));
             DisplayStatus(page);
             SetTimer(page, kStatusTimer, 3000, nullptr);
+            static bool s_prompted = false;
+            if (!s_prompted) {
+                s_prompted = true;
+                ServiceState state = QueryEnergyStarServiceState();
+                if (state == ServiceState::NotInstalled) {
+                    if (MessageBoxW(page,
+                            L"The EnergyStar background service is not installed.\n\nWould you like to install and start the service now?",
+                            L"EnergyStar", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                        if (RunElevatedCommand(page, L"--install")) {
+                            MessageBoxW(page, L"EnergyStar service installed and started successfully.", L"EnergyStar", MB_OK | MB_ICONINFORMATION);
+                            LoadSettings();
+                            RefreshStatus();
+                            DisplayStatus(page);
+                        }
+                    }
+                } else if (state == ServiceState::Stopped) {
+                    if (MessageBoxW(page,
+                            L"The EnergyStar background service is currently stopped.\n\nWould you like to start the service now?",
+                            L"EnergyStar", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                        if (!StartEnergyStarService()) {
+                            RunElevatedCommand(page, L"--start");
+                        }
+                        LoadSettings();
+                        RefreshStatus();
+                        DisplayStatus(page);
+                    }
+                }
+            }
         } else if (pageId == IDD_WHITELIST) {
             RefreshList(page);
             SetupWhitelistTooltip(page);
@@ -401,12 +469,24 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam,
             RemoveSelected(page);
             PropSheet_Changed(GetParent(page), page);
             return TRUE;
-        case IDC_COPY_PATH: {
-            HWND list = GetDlgItem(page, IDC_LIST);
-            const int selected = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0));
-            if (selected >= 0 && selected < static_cast<int>(g_exclusions.size())) {
-                CopyTextToClipboard(page, g_exclusions[selected]);
+        case IDC_POWER_ACTION: {
+            ServiceState state = QueryEnergyStarServiceState();
+            if (state == ServiceState::NotInstalled) {
+                if (RunElevatedCommand(page, L"--install")) {
+                    MessageBoxW(page, L"EnergyStar service installed and started successfully.", L"EnergyStar", MB_OK | MB_ICONINFORMATION);
+                    LoadSettings();
+                } else {
+                    MessageBoxW(page, L"Failed to install EnergyStar service. Administrator rights are required.", L"EnergyStar", MB_OK | MB_ICONWARNING);
+                }
+            } else if (state == ServiceState::Stopped) {
+                if (!StartEnergyStarService()) {
+                    RunElevatedCommand(page, L"--start");
+                }
+                LoadSettings();
             }
+            Sleep(250);
+            RefreshStatus();
+            DisplayStatus(page);
             return TRUE;
         }
         case IDC_SERVICE_INSTALL: {

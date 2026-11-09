@@ -15,8 +15,9 @@ BEGIN
     LTEXT           "Optimize background apps while on battery.", -1, 24, 32, 149, 20
     LTEXT           "Keep power control active at all times.", -1, 24, 68, 149, 20
     LTEXT           "Disable power control completely.", -1, 24, 104, 149, 20
-    GROUPBOX        "Status", -1, 7, 144, 173, 42
-    LTEXT           "", IDC_STATUS, 14, 158, 159, 20
+    GROUPBOX        "Status", -1, 7, 138, 173, 49
+    LTEXT           "", IDC_STATUS, 14, 150, 159, 14
+    PUSHBUTTON      "Install Service", IDC_POWER_ACTION, 14, 168, 86, 14
 END
 
 IDD_WHITELIST DIALOGEX 0, 0, 187, 196
@@ -25,11 +26,10 @@ CAPTION "Whitelist"
 FONT 9, "Segoe UI", 400, 0, 0x0
 BEGIN
     GROUPBOX        "Applications that keep full speed", -1, 7, 7, 173, 180
-    CONTROL         "", IDC_LIST, "ListBox", LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, 14, 18, 159, 124, WS_EX_CLIENTEDGE
-    CONTROL         "No applications yet.", IDC_EMPTY, "Static", SS_CENTER | SS_CENTERIMAGE, 14, 18, 159, 124
-    PUSHBUTTON      "Add...", IDC_ADD, 14, 150, 48, 14
-    PUSHBUTTON      "Remove", IDC_REMOVE, 68, 150, 48, 14
-    PUSHBUTTON      "Copy", IDC_COPY_PATH, 122, 150, 51, 14
+    CONTROL         "", IDC_LIST, "ListBox", LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP, 14, 18, 159, 144, WS_EX_CLIENTEDGE
+    CONTROL         "No applications yet.", IDC_EMPTY, "Static", SS_CENTER | SS_CENTERIMAGE, 14, 18, 159, 144
+    PUSHBUTTON      "Add...", IDC_ADD, 14, 168, 54, 14
+    PUSHBUTTON      "Remove", IDC_REMOVE, 72, 168, 54, 14
 END
 
 IDD_SETTINGS DIALOGEX 0, 0, 187, 196

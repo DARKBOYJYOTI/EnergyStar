@@ -14,6 +14,7 @@
 #include <fstream>
 #include <filesystem>
 #include <atomic>
+#include <cmath>
 #include "../Shared/Protocol.h"
 #include "../App.h"
 
@@ -36,12 +37,65 @@ std::atomic<DWORD> g_managedCount{};
 std::atomic<bool> g_configChanged{};
 std::wstring g_dataDir;
 std::unordered_map<DWORD, DWORD> g_foregroundPids;
+bool g_scanLogged = false;
 
-void Log(const wchar_t* text) {
+std::wstring GetProcessName(DWORD pid) {
+    if (pid == 0) return L"System Idle Process";
+    if (pid == 4) return L"System";
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (process) {
+        wchar_t image[MAX_PATH]{};
+        DWORD size = MAX_PATH;
+        if (QueryFullProcessImageNameW(process, 0, image, &size)) {
+            CloseHandle(process);
+            const wchar_t* filePart = wcsrchr(image, L'\\');
+            return filePart ? (filePart + 1) : image;
+        }
+        CloseHandle(process);
+    }
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe{ sizeof(pe) };
+        if (Process32FirstW(snapshot, &pe)) {
+            do {
+                if (pe.th32ProcessID == pid) {
+                    CloseHandle(snapshot);
+                    return pe.szExeFile;
+                }
+            } while (Process32NextW(snapshot, &pe));
+        }
+        CloseHandle(snapshot);
+    }
+    return L"PID " + std::to_wstring(pid);
+}
+
+void Log(const wchar_t* level, const std::wstring& text) {
     std::lock_guard guard(g_lock);
     if (!g_config.logging) return;
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    TIME_ZONE_INFORMATION tzi{};
+    DWORD tzResult = GetTimeZoneInformation(&tzi);
+    LONG bias = tzi.Bias;
+    if (tzResult == TIME_ZONE_ID_DAYLIGHT) bias += tzi.DaylightBias;
+    else if (tzResult == TIME_ZONE_ID_STANDARD) bias += tzi.StandardBias;
+    LONG offsetMinutes = -bias;
+    wchar_t tzSign = offsetMinutes >= 0 ? L'+' : L'-';
+    LONG absOffset = std::abs(offsetMinutes);
+    LONG tzHours = absOffset / 60;
+    LONG tzMins = absOffset % 60;
+
+    wchar_t timeBuf[64]{};
+    swprintf_s(timeBuf, L"%04d-%02d-%02d %02d:%02d:%02d.%03d %c%02d:%02d",
+        st.wYear, st.wMonth, st.wDay,
+        st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+        tzSign, tzHours, tzMins);
+
     std::wofstream log(std::filesystem::path(g_dataDir) / L"EnergyStar.log", std::ios::app);
-    if (log) log << GetTickCount64() << L" " << text << L"\n";
+    if (log) {
+        log << timeBuf << L" [" << level << L"] " << text << L"\n";
+        log.flush();
+    }
 }
 
 std::wstring GetDataDirectory() {
@@ -88,7 +142,7 @@ bool IsExcluded(DWORD pid) {
     return excluded;
 }
 
-void Restore(DWORD pid) {
+void Restore(DWORD pid, bool logRestore = true) {
     auto it = g_managed.find(pid);
     if (it == g_managed.end()) return;
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION, FALSE, pid);
@@ -107,7 +161,9 @@ void Restore(DWORD pid) {
         state.StateMask = 0;
         BOOL qosRestored = SetProcessInformation(process, ProcessPowerThrottling, &state, sizeof(state));
         BOOL priorityRestored = SetPriorityClass(process, it->second.priority);
-        if (qosRestored || priorityRestored) Log(L"Restored process state.");
+        if (logRestore && (qosRestored || priorityRestored)) {
+            Log(L"INFO", L"Restored " + GetProcessName(pid) + L" (PID " + std::to_wstring(pid) + L").");
+        }
         CloseHandle(process);
     }
     g_managed.erase(it);
@@ -129,10 +185,15 @@ void Throttle(DWORD pid) {
     state.StateMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
     BOOL qosApplied = SetProcessInformation(process, ProcessPowerThrottling, &state, sizeof(state));
     BOOL priorityApplied = SetPriorityClass(process, IDLE_PRIORITY_CLASS);
+    DWORD prioErr = priorityApplied ? 0 : GetLastError();
     if (priorityApplied || qosApplied) {
         g_managed[pid] = ManagedProcess{ original, created };
         g_managedCount = static_cast<DWORD>(g_managed.size());
-        Log(L"Throttled background process.");
+        std::wstring procName = GetProcessName(pid);
+        if (!priorityApplied) {
+            Log(L"WARN", L"SetPriorityClass failed for " + procName + L" (PID " + std::to_wstring(pid) + L", error " + std::to_wstring(prioErr) + L").");
+        }
+        Log(L"INFO", L"Throttled " + procName + L" (PID " + std::to_wstring(pid) + L").");
     } else {
         PROCESS_POWER_THROTTLING_STATE restore{};
         restore.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
@@ -189,6 +250,10 @@ bool IsSessionActive(DWORD sessionId) {
 void ScanProcesses() {
     const auto activeSessions = GetActiveSessions();
     if (activeSessions.empty()) return;
+    if (!g_scanLogged) {
+        g_scanLogged = true;
+        Log(L"INFO", L"Scanning user-session processes for background throttling.");
+    }
     auto tree = GetProcessTree();
     std::unordered_map<DWORD, DWORD> foreground;
     { std::lock_guard guard(g_lock); foreground = g_foregroundPids; }
@@ -206,8 +271,17 @@ void ScanProcesses() {
         DWORD ownerSession = 0;
         if (ProcessIdToSessionId(entry.th32ProcessID, &ownerSession) && activeSessions.contains(ownerSession)) {
             const auto found = foregroundTrees.find(ownerSession);
-            if (found != foregroundTrees.end() && found->second.contains(entry.th32ProcessID)) Restore(entry.th32ProcessID);
-            else Throttle(entry.th32ProcessID);
+            if (found != foregroundTrees.end() && found->second.contains(entry.th32ProcessID)) {
+                auto itFg = foreground.find(ownerSession);
+                if (itFg != foreground.end() && itFg->second != 0 && entry.th32ProcessID != itFg->second) {
+                    if (g_managed.contains(entry.th32ProcessID)) {
+                        Log(L"INFO", L"Boosted child process " + GetProcessName(entry.th32ProcessID) + L" (PID " + std::to_wstring(entry.th32ProcessID) + L") of PID " + std::to_wstring(itFg->second) + L".");
+                    }
+                }
+                Restore(entry.th32ProcessID, false);
+            } else {
+                Throttle(entry.th32ProcessID);
+            }
         }
     } while (Process32NextW(snapshot, &entry));
     CloseHandle(snapshot);
@@ -225,6 +299,7 @@ void ScanProcesses() {
 
 void LoadConfig() {
     std::lock_guard guard(g_lock);
+    g_config.logging = 0;
     std::wifstream config(std::filesystem::path(g_dataDir) / L"EnergyStar.conf");
     std::wstring line;
     while (std::getline(config, line)) {
@@ -253,6 +328,11 @@ bool SaveConfig(const PipeMessage& input) {
         wchar_t canonical[MAX_PATH]{};
         if (!GetFullPathNameW(input.exclusions[i], MAX_PATH, canonical, nullptr)) return false;
     }
+    bool loggingJustEnabled = false;
+    {
+        std::lock_guard guard(g_lock);
+        loggingJustEnabled = (!g_config.logging && input.logging);
+    }
     wchar_t configTemp[MAX_PATH]{}, listTemp[MAX_PATH]{}, configFile[MAX_PATH]{}, listFile[MAX_PATH]{};
     swprintf_s(configFile, L"%s\\EnergyStar.conf", g_dataDir.c_str());
     swprintf_s(listFile, L"%s\\whitelist.conf", g_dataDir.c_str());
@@ -272,6 +352,9 @@ bool SaveConfig(const PipeMessage& input) {
         !MoveFileExW(listTemp, listFile, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return false;
     LoadConfig();
     g_configChanged = true;
+    if (loggingJustEnabled) {
+        Log(L"INFO", L"Logging enabled. Log file: " + (std::filesystem::path(g_dataDir) / L"EnergyStar.log").wstring());
+    }
     return true;
 }
 
@@ -299,9 +382,18 @@ DWORD WINAPI PipeThread(void*) {
                 else if (request.action == PipeAction::Foreground) {
                     DWORD processSession = 0;
                     if (ProcessIdToSessionId(request.foregroundPid, &processSession) && IsSessionActive(processSession)) {
-                        { std::lock_guard guard(g_lock); g_foregroundPids[processSession] = request.foregroundPid; }
+                        DWORD prevPid = 0;
+                        {
+                            std::lock_guard guard(g_lock);
+                            auto it = g_foregroundPids.find(processSession);
+                            if (it != g_foregroundPids.end()) prevPid = it->second;
+                            g_foregroundPids[processSession] = request.foregroundPid;
+                        }
                         SetEvent(g_foregroundEvent);
-                        Log(L"Foreground process changed.");
+                        if (prevPid != 0 && prevPid != request.foregroundPid) {
+                            Log(L"INFO", L"Foreground changed: throttling " + GetProcessName(prevPid) + L" (PID " + std::to_wstring(prevPid) + L").");
+                        }
+                        Log(L"INFO", L"Foreground: boosting " + GetProcessName(request.foregroundPid) + L" (PID " + std::to_wstring(request.foregroundPid) + L").");
                     }
                 }
                 std::lock_guard guard(g_lock);
@@ -388,6 +480,11 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
     g_dataDir = GetDataDirectory();
     MigrateLegacySettings();
     LoadConfig();
+    if (g_config.logging) {
+        Log(L"INFO", L"Logging enabled. Log file: " + (std::filesystem::path(g_dataDir) / L"EnergyStar.log").wstring());
+    }
+    Log(L"INFO", L"EnergyStar starting.");
+    Log(L"INFO", L"Foreground event hook registered.");
     LaunchAgents();
     HANDLE pipeThread = CreateThread(nullptr, 0, PipeThread, nullptr, 0, nullptr);
     g_status.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
@@ -406,8 +503,14 @@ void WINAPI ServiceMain(DWORD, wchar_t**) {
             for (const auto& item : g_managed) if (IsExcluded(item.first)) restore.push_back(item.first);
             for (DWORD pid : restore) Restore(pid);
         }
-        if (enabled) ScanProcesses();
-        else { std::vector<DWORD> pids; for (auto& item : g_managed) pids.push_back(item.first); for (DWORD pid : pids) Restore(pid); }
+        if (enabled) {
+            ScanProcesses();
+        } else {
+            g_scanLogged = false;
+            std::vector<DWORD> pids;
+            for (auto& item : g_managed) pids.push_back(item.first);
+            for (DWORD pid : pids) Restore(pid);
+        }
     } while (waitResult != WAIT_OBJECT_0);
     { std::vector<DWORD> pids; for (auto& item : g_managed) pids.push_back(item.first); for (DWORD pid : pids) Restore(pid); }
     for (auto& item : g_agents) { TerminateProcess(item.second, 0); CloseHandle(item.second); }

@@ -1,4 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <path fill="#e0aa26" d="M128 15 157 91l82 4-63 52 21 80-69-44-69 44 21-80-63-52 82-4z"/>
-  <path fill="#213a69" d="m141 65-48 77h31l-12 53 54-76h-32l18-54z"/>
+  <defs>
+    <linearGradient id="starGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFD13B"/>
+      <stop offset="100%" stop-color="#FF9500"/>
+    </linearGradient>
+    <filter id="whiteGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Golden Amber Star -->
+  <path fill="url(#starGrad)" stroke="#E08600" stroke-width="2.5" d="M128 15 157 91l82 4-63 52 21 80-69-44-69 44 21-80-63-52 82-4z"/>
+  <!-- Glowing White Flash Lightning Bolt -->
+  <path fill="#FFFFFF" filter="url(#whiteGlow)" stroke="#FFFFFF" stroke-width="1.5" d="m141 65-48 77h31l-12 53 54-76h-32l18-54z"/>
 </svg>
