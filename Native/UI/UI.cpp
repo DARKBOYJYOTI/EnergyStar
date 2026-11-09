@@ -65,6 +65,22 @@ LRESULT CALLBACK WhitelistListProc(HWND list, UINT message, WPARAM wParam, LPARA
         HMENU menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, IDM_COPY_PATH, L"Copy path");
         SetMenuDefaultItem(menu, IDM_COPY_PATH, FALSE);
+        SIZE textSize{};
+        HDC dc = GetDC(list);
+        if (dc) {
+            GetTextExtentPoint32W(dc, L"Copy path", 9, &textSize);
+            ReleaseDC(list, dc);
+        }
+        const int menuWidth = textSize.cx + GetSystemMetrics(SM_CXMENUCHECK) + 80;
+        const int menuHeight = GetSystemMetrics(SM_CYMENU) + 8;
+        HWND sheet = GetParent(GetParent(list));
+        RECT client{};
+        if (GetClientRect(sheet, &client)) {
+            POINT corners[2] = { { client.left, client.top }, { client.right, client.bottom } };
+            MapWindowPoints(sheet, nullptr, corners, 2);
+            screen.x = std::clamp(screen.x, corners[0].x, std::max(corners[0].x, corners[1].x - menuWidth));
+            screen.y = std::clamp(screen.y, corners[0].y, std::max(corners[0].y, corners[1].y - menuHeight));
+        }
         const int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, list, nullptr);
         DestroyMenu(menu);
         if (command == IDM_COPY_PATH) CopyTextToClipboard(GetParent(list), g_exclusions[index]);
