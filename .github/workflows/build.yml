@@ -1,0 +1,51 @@
+name: Build EnergyStar
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore solution
+        run: dotnet restore EnergyStar.sln
+
+      - name: Publish x64
+        run: dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
+
+      - name: Publish ARM64
+        run: dotnet publish EnergyStar.UI/EnergyStar.UI.csproj -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
+
+      - name: Prepare portable and install-ready packages
+        shell: pwsh
+        run: |
+          $publish = 'EnergyStar.UI/bin/Release/net10.0-windows'
+          foreach ($arch in @('win-x64', 'win-arm64')) {
+            $source = Join-Path $publish "$arch/publish"
+            $portable = "dist/portable/$arch"
+            $installable = "dist/installable/$arch"
+            New-Item -ItemType Directory -Force -Path $portable, "$installable/publish" | Out-Null
+            Copy-Item "$source/*" $portable -Recurse -Force
+            Copy-Item "$source/*" "$installable/publish" -Recurse -Force
+            Copy-Item Package/Install-EnergyStar.ps1, Package/Uninstall-EnergyStar.ps1 $installable
+            Compress-Archive -Path "$portable/*" -DestinationPath "dist/EnergyStar-portable-$arch.zip" -Force
+            Compress-Archive -Path "$installable/*" -DestinationPath "dist/EnergyStar-install-ready-$arch.zip" -Force
+          }
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: EnergyStar-portable-and-install-ready
+          path: dist/*.zip
+          if-no-files-found: error
