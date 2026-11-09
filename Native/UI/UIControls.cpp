@@ -59,6 +59,9 @@ void FillRounded(HDC dc, const RECT& rect, int radius, COLORREF fill, COLORREF b
 void DrawPrimaryButton(const Theme& theme, const DRAWITEMSTRUCT* draw) {
     const int radius = Dpi(theme, 8);
     RECT rect = draw->rcItem;
+    HBRUSH background = CreateSolidBrush(theme.content);
+    FillRect(draw->hDC, &rect, background);
+    DeleteObject(background);
     COLORREF fill = (draw->itemState & ODS_SELECTED) ? theme.accentPressed : Hovered(draw) ? theme.accentHover : theme.accent;
     FillRounded(draw->hDC, rect, radius, fill, fill);
     wchar_t label[128]{};
@@ -69,6 +72,9 @@ void DrawPrimaryButton(const Theme& theme, const DRAWITEMSTRUCT* draw) {
 void DrawSecondaryButton(const Theme& theme, const DRAWITEMSTRUCT* draw) {
     const int radius = Dpi(theme, 8);
     RECT rect = draw->rcItem;
+    HBRUSH background = CreateSolidBrush(theme.content);
+    FillRect(draw->hDC, &rect, background);
+    DeleteObject(background);
     COLORREF fill = (draw->itemState & ODS_SELECTED) ? theme.buttonPressed : Hovered(draw) ? theme.buttonHover : theme.button;
     FillRounded(draw->hDC, rect, radius, fill, theme.border);
     wchar_t label[128]{};
@@ -78,6 +84,9 @@ void DrawSecondaryButton(const Theme& theme, const DRAWITEMSTRUCT* draw) {
 
 void DrawModeCard(const Theme& theme, const DRAWITEMSTRUCT* draw, bool selected, const wchar_t* title, const wchar_t* detail) {
     RECT rect = draw->rcItem;
+    HBRUSH background = CreateSolidBrush(theme.content);
+    FillRect(draw->hDC, &rect, background);
+    DeleteObject(background);
     const int radius = Dpi(theme, 10);
     COLORREF fill = selected ? theme.cardSelected : Hovered(draw) ? theme.cardHover : theme.card;
     FillRounded(draw->hDC, rect, radius, fill, selected ? theme.borderSelected : theme.border);
@@ -118,6 +127,9 @@ void DrawModeCard(const Theme& theme, const DRAWITEMSTRUCT* draw, bool selected,
 
 void DrawToggleCard(const Theme& theme, const DRAWITEMSTRUCT* draw, bool enabled, const wchar_t* title, const wchar_t* detail) {
     RECT rect = draw->rcItem;
+    HBRUSH background = CreateSolidBrush(theme.content);
+    FillRect(draw->hDC, &rect, background);
+    DeleteObject(background);
     const int radius = Dpi(theme, 10);
     FillRounded(draw->hDC, rect, radius, Hovered(draw) ? theme.cardHover : theme.card, theme.border);
 
@@ -150,10 +162,12 @@ void DrawToggleCard(const Theme& theme, const DRAWITEMSTRUCT* draw, bool enabled
 
 void DrawNavItem(const Theme& theme, const DRAWITEMSTRUCT* draw, int icon, bool active) {
     RECT rect = draw->rcItem;
+    HBRUSH background = CreateSolidBrush(theme.sidebar);
+    FillRect(draw->hDC, &rect, background);
+    DeleteObject(background);
     const bool hover = Hovered(draw);
-    if (active || hover)
-        FillRounded(draw->hDC, rect, Dpi(theme, 8), active ? theme.navSelected : theme.navHover,
-            active ? theme.navSelected : theme.navHover);
+    FillRounded(draw->hDC, rect, Dpi(theme, 8), active ? theme.navSelected : hover ? theme.navHover : theme.sidebar,
+        active ? theme.navSelected : hover ? theme.navHover : theme.sidebar);
 
     if (active) {
         const int barWidth = Dpi(theme, 3);
