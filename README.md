@@ -26,6 +26,10 @@
 
 EnergyStar keeps your laptop running cool and extends battery life by applying Windows EcoQoS (Efficiency Mode) and idle priority to background applications. When you switch between windows, your active application and its child processes automatically receive full CPU performance.
 
+<p align="center">
+  <img src="Assets/ui.png" alt="EnergyStar Interface" width="320">
+</p>
+
 Available as both a **standalone single-executable portable build** and a **guided installer** for both x64 and ARM64.
 
 ---
