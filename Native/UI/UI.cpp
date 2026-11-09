@@ -159,12 +159,9 @@ void RemoveSelected(HWND page) {
     RefreshList(page);
 }
 
-INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam) {
+INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM, int pageId) {
     switch (message) {
     case WM_INITDIALOG: {
-        auto* propsheet = reinterpret_cast<PROPSHEETPAGE*>(lParam);
-        const int pageId = static_cast<int>(propsheet->lParam);
-        SetWindowLongPtrW(page, DWLP_USER, static_cast<LONG_PTR>(pageId));
         if (pageId == IDD_POWER) {
             CheckRadioButton(page, IDC_MODE_AUTO, IDC_MODE_OFF, ModeControlId(g_mode));
             DisplayStatus(page);
@@ -181,14 +178,17 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
         switch (id) {
         case IDC_MODE_AUTO:
             g_mode = PowerMode::Automatic;
+            CheckRadioButton(page, IDC_MODE_AUTO, IDC_MODE_OFF, IDC_MODE_AUTO);
             PropSheet_Changed(GetParent(page), page);
             return TRUE;
         case IDC_MODE_ALWAYS:
             g_mode = PowerMode::AlwaysOn;
+            CheckRadioButton(page, IDC_MODE_AUTO, IDC_MODE_OFF, IDC_MODE_ALWAYS);
             PropSheet_Changed(GetParent(page), page);
             return TRUE;
         case IDC_MODE_OFF:
             g_mode = PowerMode::Off;
+            CheckRadioButton(page, IDC_MODE_AUTO, IDC_MODE_OFF, IDC_MODE_OFF);
             PropSheet_Changed(GetParent(page), page);
             return TRUE;
         case IDC_LOGGING:
@@ -224,7 +224,6 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
         return reinterpret_cast<INT_PTR>(g_whiteBrush);
     }
     case PSN_SETACTIVE: {
-        const int pageId = static_cast<int>(GetWindowLongPtrW(page, DWLP_USER));
         if (pageId == IDD_POWER) {
             RefreshStatus();
             DisplayStatus(page);
@@ -234,7 +233,6 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case PSN_APPLY: {
-        const int pageId = static_cast<int>(GetWindowLongPtrW(page, DWLP_USER));
         if (pageId != IDD_POWER) return PSNRET_NOERROR;
         if (!SaveSettings(page)) return PSNRET_INVALID;
         DisplayStatus(page);
@@ -245,6 +243,22 @@ INT_PTR CALLBACK PageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
         return TRUE;
     }
     return FALSE;
+}
+
+INT_PTR CALLBACK PowerPageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam) {
+    return PageProc(page, message, wParam, lParam, IDD_POWER);
+}
+
+INT_PTR CALLBACK WhitelistPageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam) {
+    return PageProc(page, message, wParam, lParam, IDD_WHITELIST);
+}
+
+INT_PTR CALLBACK SettingsPageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam) {
+    return PageProc(page, message, wParam, lParam, IDD_SETTINGS);
+}
+
+INT_PTR CALLBACK AboutPageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam) {
+    return PageProc(page, message, wParam, lParam, IDD_ABOUT);
 }
 }
 
@@ -259,11 +273,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     PROPSHEETPAGEW pages[4]{};
     const int templates[4] = { IDD_POWER, IDD_WHITELIST, IDD_SETTINGS, IDD_ABOUT };
+    const DLGPROC procs[4] = { PowerPageProc, WhitelistPageProc, SettingsPageProc, AboutPageProc };
     for (int i = 0; i < 4; ++i) {
         pages[i].dwSize = sizeof(PROPSHEETPAGEW);
         pages[i].hInstance = instance;
         pages[i].pszTemplate = MAKEINTRESOURCEW(templates[i]);
-        pages[i].pfnDlgProc = PageProc;
+        pages[i].pfnDlgProc = procs[i];
         pages[i].lParam = templates[i];
     }
 
