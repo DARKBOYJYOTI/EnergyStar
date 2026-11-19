@@ -13,12 +13,20 @@ on:
         required: true
         default: true
         type: boolean
+      publish:
+        description: 'Publish GitHub Release'
+        required: true
+        default: false
+        type: boolean
   push:
+    branches:
+      - master
     tags:
       - 'v*'
+  pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -44,9 +52,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed.' }
           $payload = "build/${{ matrix.arch }}/bin"
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.tag_name }}' } else { '${{ github.ref_name }}' }
+          $appVersion = if ($tag -match '^v?\d+\.\d+\.\d+') { $tag -replace '^v','' } else { '2.0.0' }
           New-Item -ItemType Directory -Force -Path dist/portable, dist/setups | Out-Null
           Copy-Item "$payload/EnergyStar.exe" "dist/portable/EnergyStar-portable-${{ matrix.arch }}.exe"
-          & $iscc "/DAppArch=${{ matrix.arch }}" "/DPayloadDir=$((Resolve-Path $payload).Path)" "/DOutputDir=$((Resolve-Path dist/setups).Path)" Package/EnergyStar.iss
+          & $iscc "/DAppArch=${{ matrix.arch }}" "/DAppVersion=$appVersion" "/DPayloadDir=$((Resolve-Path $payload).Path)" "/DOutputDir=$((Resolve-Path dist/setups).Path)" Package/EnergyStar.iss
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
 
       - uses: actions/upload-artifact@v4
@@ -64,7 +74,12 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: build
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -77,8 +92,10 @@ jobs:
       - name: Prepare release notes
         shell: pwsh
         run: |
-          @'
-          ## EnergyStar 2.0.0 Pre-Release
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.tag_name }}' } else { '${{ github.ref_name }}' }
+          $version = $tag -replace '^v',''
+          $notes = @'
+          ## EnergyStar __VERSION__ Release
 
           Native Windows Efficiency, Battery & Desktop Responsiveness Optimizer for Windows 11 and 10.
 
@@ -97,7 +114,8 @@ jobs:
           - **Whitelist Support**: Keep performance-critical background tasks (compilers, audio workstations, renderers) at full speed. Easily add apps or Start Menu shortcuts (`.lnk`) with automatic resolution.
           - **Dedicated Help & About Tabs**: Comprehensive in-app user guide, clickable repository links, MIT license terms, and privacy policy (100% local, no telemetry, no tracking).
           - **Enhanced Logging**: Optional high-precision diagnostic log format with timezone offsets, process names, and PIDs (disabled by default for zero overhead).
-          '@ | Set-Content -Path release-notes.md -Encoding utf8
+          '@
+          $notes.Replace('__VERSION__', $version) | Set-Content -Path release-notes.md -Encoding utf8
 
       - name: Create or Update GitHub Release
         shell: pwsh

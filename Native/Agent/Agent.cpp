@@ -38,18 +38,25 @@ DWORD GetForegroundProcess(HWND window) {
 }
 
 DWORD SendForeground(DWORD pid) {
-    HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE && GetLastError() == ERROR_PIPE_BUSY && WaitNamedPipeW(kPipeName, 250))
-        pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) return GetLastError();
-    PipeMessage request{};
-    request.action = PipeAction::Foreground;
-    request.foregroundPid = pid;
-    DWORD written = 0, read = 0;
-    BOOL ok = WriteFile(pipe, &request, kHeaderSize, &written, nullptr) && written == kHeaderSize &&
-        ReadFile(pipe, &request, kHeaderSize, &read, nullptr) && read == kHeaderSize;
-    CloseHandle(pipe);
-    return ok ? ERROR_SUCCESS : GetLastError();
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (pipe == INVALID_HANDLE_VALUE) {
+            const DWORD error = GetLastError();
+            if (error == ERROR_PIPE_BUSY && WaitNamedPipeW(kPipeName, 250)) continue;
+            return error;
+        }
+        PipeMessage request{};
+        request.action = PipeAction::Foreground;
+        request.foregroundPid = pid;
+        DWORD written = 0, read = 0;
+        BOOL ok = WriteFile(pipe, &request, kHeaderSize, &written, nullptr) && written == kHeaderSize &&
+            ReadFile(pipe, &request, kHeaderSize, &read, nullptr) && read == kHeaderSize;
+        const DWORD error = ok ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(pipe);
+        if (ok) return ERROR_SUCCESS;
+        if (error != ERROR_PIPE_BUSY && error != ERROR_PIPE_NOT_CONNECTED) return error;
+    }
+    return ERROR_PIPE_BUSY;
 }
 
 void CALLBACK ForegroundChanged(HWINEVENTHOOK, DWORD, HWND window, LONG, LONG, DWORD, DWORD) {

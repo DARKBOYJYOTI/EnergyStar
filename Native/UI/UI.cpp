@@ -289,6 +289,13 @@ bool SaveSettings(HWND owner) {
     if (!hasBattery && g_mode == PowerMode::Automatic) {
         g_mode = PowerMode::AlwaysOn;
     }
+    for (const auto& exclusion : g_exclusions) {
+        if (exclusion.size() >= kPathChars) {
+            MessageBoxW(owner, L"An EnergyStar whitelist path is too long. Remove it and add a shorter path.",
+                L"EnergyStar", MB_ICONERROR | MB_OK);
+            return false;
+        }
+    }
     PipeMessage message{};
     message.action = PipeAction::Configure;
     message.mode = g_mode;
@@ -516,6 +523,11 @@ bool BrowseApplication(HWND owner) {
 
     if (g_exclusions.size() >= kMaxExclusions) {
         MessageBoxW(owner, L"The whitelist is full.", L"EnergyStar", MB_ICONINFORMATION | MB_OK);
+        return false;
+    }
+    if (path.size() >= kPathChars) {
+        MessageBoxW(owner, L"The selected path is too long for the EnergyStar whitelist.",
+            L"EnergyStar", MB_ICONWARNING | MB_OK);
         return false;
     }
     if (std::find(g_exclusions.begin(), g_exclusions.end(), path) != g_exclusions.end()) return false;

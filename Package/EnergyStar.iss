@@ -7,11 +7,14 @@
 #ifndef OutputDir
   #error OutputDir must be provided by the build workflow.
 #endif
+#ifndef AppVersion
+  #define AppVersion "2.0.0"
+#endif
 
 [Setup]
 AppId={{D45C1B91-22A8-4F2C-8B74-63F3EDC09D0E}
 AppName=EnergyStar
-AppVersion=2.0.0
+AppVersion={#AppVersion}
 AppPublisher=EnergyStar Community
 DefaultDirName={autopf}\EnergyStar
 UninstallDisplayIcon={app}\EnergyStar.exe
