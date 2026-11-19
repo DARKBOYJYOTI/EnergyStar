@@ -55,7 +55,7 @@ Filename: "{app}\EnergyStar.exe"; Parameters: "--install"; Flags: runhidden wait
 Filename: "{app}\EnergyStar.exe"; Description: "Launch EnergyStar"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
-Filename: "{cmd}"; Parameters: "/c net stop EnergyStarService >nul 2>&1"; Flags: runhidden waituntilterminated
+Filename: "{cmd}"; Parameters: "/c net stop EnergyStarService >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "StopEnergyStarService"
 Filename: "{app}\EnergyStar.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveEnergyStarService"
 
 [UninstallDelete]
