@@ -155,11 +155,11 @@ bool IsExcluded(DWORD pid) {
         static const wchar_t* bypass[] = {
             L"EnergyStar.exe", L"EnergyStar.Service.exe", L"EnergyStar.Agent.exe",
             L"explorer.exe", L"dwm.exe", L"taskmgr.exe", L"procmon.exe", L"procmon64.exe",
-            L"msedge.exe", L"WebViewHost.exe", L"ApplicationFrameHost.exe", L"Widgets.exe",
+            L"WebViewHost.exe", L"ApplicationFrameHost.exe",
             L"ShellExperienceHost.exe", L"StartMenuExperienceHost.exe", L"ShellHost.exe",
-            L"SearchHost.exe", L"sihost.exe", L"fontdrvhost.exe", L"csrss.exe", L"smss.exe",
-            L"svchost.exe", L"WUDFRd.exe", L"ctfmon.exe", L"TextInputHost.exe",
-            L"RuntimeBroker.exe", L"taskhostw.exe"
+            L"SearchHost.exe", L"sihost.exe", L"fontdrvhost.exe", L"LockApp.exe",
+            L"csrss.exe", L"smss.exe", L"svchost.exe", L"WUDFRd.exe",
+            L"ctfmon.exe", L"TextInputHost.exe"
         };
         for (auto item : bypass) if (_wcsicmp(name, item) == 0) excluded = true;
     }
