@@ -159,9 +159,7 @@ bool IsExcluded(DWORD pid) {
             L"ShellExperienceHost.exe", L"StartMenuExperienceHost.exe", L"ShellHost.exe",
             L"SearchHost.exe", L"sihost.exe", L"fontdrvhost.exe", L"csrss.exe", L"smss.exe",
             L"svchost.exe", L"WUDFRd.exe", L"ctfmon.exe", L"TextInputHost.exe",
-            L"RuntimeBroker.exe", L"taskhostw.exe", L"RtkAudUService64.exe",
-            L"Nahimic3.exe", L"NahimicAPO4Volume.exe", L"NahimicNotifSys.exe",
-            L"igfxEM.exe", L"IGCC.exe", L"IGCCTray.exe"
+            L"RuntimeBroker.exe", L"taskhostw.exe"
         };
         for (auto item : bypass) if (_wcsicmp(name, item) == 0) excluded = true;
     }
